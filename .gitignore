@@ -1,0 +1,29 @@
+# Foundry
+contracts/out/
+contracts/cache/
+
+# Rust
+target/
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+cache/
+out/

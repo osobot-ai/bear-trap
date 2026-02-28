@@ -1,0 +1,8 @@
+[submodule "lib/risc0-ethereum"]
+	path = lib/risc0-ethereum
+	url = https://github.com/risc0/risc0-ethereum
+
+[submodule "lib/delegation-framework"]
+	path = lib/delegation-framework
+	url = https://github.com/MetaMask/delegation-framework
+	branch = v1.3.0
