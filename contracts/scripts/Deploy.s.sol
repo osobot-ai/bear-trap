@@ -16,13 +16,13 @@ contract Deploy is Script {
         address verifierAddress = vm.envAddress("VERIFIER_ADDRESS");
         address osoTokenAddress = vm.envAddress("OSO_TOKEN");
         uint256 ticketPrice = vm.envUint("TICKET_PRICE");
-        address operatorAddress = vm.envAddress("OPERATOR_ADDRESS");
+        address ownerAddress = vm.envAddress("OWNER_ADDRESS");
 
         console2.log("Deploying Bear Trap contracts...");
         console2.log("Verifier:", verifierAddress);
         console2.log("OSO Token:", osoTokenAddress);
         console2.log("Ticket Price:", ticketPrice);
-        console2.log("Operator:", operatorAddress);
+        console2.log("Owner:", ownerAddress);
 
         vm.startBroadcast();
 
@@ -32,16 +32,13 @@ contract Deploy is Script {
         );
         console2.log("ZKPEnforcer deployed at:", address(zkpEnforcer));
 
-        // Deploy BearTrap
+        // Deploy BearTrap with owner (who is also the operator)
         BearTrap bearTrap = new BearTrap(
             IERC20(osoTokenAddress),
-            ticketPrice
+            ticketPrice,
+            ownerAddress
         );
         console2.log("BearTrap deployed at:", address(bearTrap));
-
-        // Set operator
-        bearTrap.setOperator(operatorAddress);
-        console2.log("Operator set to:", operatorAddress);
 
         vm.stopBroadcast();
 

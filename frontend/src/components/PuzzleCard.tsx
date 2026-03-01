@@ -1,9 +1,8 @@
 
-import { formatEther, type Address } from "viem";
+import { type Address } from "viem";
 
 interface PuzzleCardProps {
   puzzleId: number;
-  prize: bigint;
   clueURI: string;
   solved: boolean;
   winner: Address;
@@ -18,13 +17,10 @@ function truncateAddress(address: string): string {
 
 export function PuzzleCard({
   puzzleId,
-  prize,
   clueURI,
   solved,
   winner,
 }: PuzzleCardProps) {
-  const prizeFormatted = formatEther(prize);
-
   return (
     <div
       className={`
@@ -77,17 +73,6 @@ export function PuzzleCard({
         >
           {solved ? "CLAIMED" : "LIVE"}
         </div>
-      </div>
-
-      {/* Prize */}
-      <div className="mb-4 rounded-lg bg-trap-black/50 border border-trap-border/50 p-4">
-        <p className="text-xs font-mono text-trap-muted mb-1 uppercase tracking-wider">
-          Prize Pool
-        </p>
-        <p className="font-display text-2xl text-white">
-          {prizeFormatted}{" "}
-          <span className="text-sm text-trap-muted font-mono">ETH</span>
-        </p>
       </div>
 
       {/* Details */}

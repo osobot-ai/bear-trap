@@ -9,6 +9,8 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
+import Database from "better-sqlite3";
+import path from "path";
 
 interface ProveRequest {
   passphrase: string;
@@ -23,23 +25,32 @@ interface ProveResult {
   solutionHash: string;
 }
 
+interface PuzzleRow {
+  id: number;
+  solution_hash: string;
+  answer: string | null;
+  prize_eth: string;
+  delegation: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // Proof generation can take several minutes via Boundless
 const PROOF_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
- * Load puzzle answers from PUZZLE_ANSWERS env var.
- * Format: JSON object mapping puzzleId (string) to answer hash (0x-prefixed hex string).
- * Example: {"0":"0xabcdef...","1":"0x123456..."}
+ * Load puzzle data from SQLite database.
+ * Returns the puzzle row or null if not found.
  */
-function getPuzzleAnswerHash(puzzleId: number): string | null {
-  const answersJson = process.env.PUZZLE_ANSWERS;
-  if (!answersJson) return null;
-
+function getPuzzleData(puzzleId: number): PuzzleRow | null {
+  const dbPath = path.resolve(process.cwd(), "..", "data", "puzzles.db");
   try {
-    const answers = JSON.parse(answersJson) as Record<string, string>;
-    return answers[String(puzzleId)] ?? null;
-  } catch {
-    console.error("[prove] Failed to parse PUZZLE_ANSWERS env var");
+    const db = new Database(dbPath, { readonly: true });
+    const row = db.prepare("SELECT * FROM puzzles WHERE id = ?").get(puzzleId) as PuzzleRow | undefined;
+    db.close();
+    return row ?? null;
+  } catch (err) {
+    console.error("[prove] Failed to read puzzle from SQLite:", err);
     return null;
   }
 }
@@ -103,14 +114,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Look up the correct answer hash from server-side config
-    const expectedHash = getPuzzleAnswerHash(body.puzzleId);
-    if (!expectedHash) {
+    // Look up puzzle data from SQLite
+    const puzzleData = getPuzzleData(body.puzzleId);
+    if (!puzzleData) {
       return NextResponse.json(
-        { error: `No answer configured for puzzle ${body.puzzleId}` },
+        { error: `No puzzle found with id ${body.puzzleId}` },
         { status: 400 }
       );
     }
+
+    const expectedHash = puzzleData.solution_hash;
 
     // Step 1: Verify puzzle exists and isn't solved, then burn ticket via useTicket
     const account = privateKeyToAccount(operatorKey as Hex);
@@ -134,8 +147,8 @@ export async function POST(request: NextRequest) {
       args: [BigInt(body.puzzleId)],
     });
 
-    // puzzle returns (uint256 prizeAmount, string clueURI, bool solved, address winner)
-    const puzzleSolved = puzzle[2];
+    // puzzle returns (string clueURI, bool solved, address winner)
+    const puzzleSolved = puzzle[1];
     if (puzzleSolved) {
       return NextResponse.json(
         { error: "This puzzle has already been solved" },
@@ -246,7 +259,11 @@ export async function POST(request: NextRequest) {
       });
     });
 
-    return NextResponse.json(result);
+    // Include delegation from DB in the response so frontend can use it
+    return NextResponse.json({
+      ...result,
+      delegation: puzzleData.delegation,
+    });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "An unknown error occurred";

@@ -5,6 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {BearTrap, IERC20} from "../src/BearTrap.sol";
 import {ZKPEnforcer} from "../src/ZKPEnforcer.sol";
 import {IBearTrap} from "../src/IBearTrap.sol";
+import {Ownable} from "openzeppelin/contracts/access/Ownable.sol";
 import {ModeCode} from "delegation-framework/utils/Types.sol";
 import {IRiscZeroVerifier, Receipt, VerificationFailed} from "risc0/IRiscZeroVerifier.sol";
 
@@ -72,8 +73,7 @@ contract BearTrapTest is Test {
     MockRiscZeroVerifier mockVerifier;
     ZKPEnforcer zkpEnforcer;
 
-    address owner = address(this);
-    address operatorAddr = address(0xCAFE);
+    address ownerAddr = address(this);
     address player = address(0xBEEF);
     address burnAddress = 0x000000000000000000000000000000000000dEaD;
 
@@ -83,13 +83,11 @@ contract BearTrapTest is Test {
         osoToken = new MockERC20();
         bearTrap = new BearTrap(
             IERC20(address(osoToken)),
-            ticketPrice
+            ticketPrice,
+            ownerAddr
         );
         mockVerifier = new MockRiscZeroVerifier();
         zkpEnforcer = new ZKPEnforcer(IRiscZeroVerifier(address(mockVerifier)));
-
-        // Set operator
-        bearTrap.setOperator(operatorAddr);
     }
 
     // ==================== Ticket Tests ====================
@@ -149,27 +147,12 @@ contract BearTrapTest is Test {
         vm.stopPrank();
     }
 
-    // ==================== Operator / setOperator Tests ====================
-
-    function test_SetOperator() public {
-        address newOperator = address(0xABCD);
-        bearTrap.setOperator(newOperator);
-        assertEq(bearTrap.operator(), newOperator);
-    }
-
-    function test_SetOperatorNotOwner() public {
-        vm.prank(player);
-        vm.expectRevert(IBearTrap.NotOwner.selector);
-        bearTrap.setOperator(player);
-    }
-
     // ==================== useTicket Tests ====================
 
     function test_UseTicket() public {
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
         _givePlayerTickets(3);
 
-        vm.prank(operatorAddr);
         vm.expectEmit(true, true, false, true);
         emit IBearTrap.TicketUsed(0, player, 2);
         bearTrap.useTicket(player, 0);
@@ -177,19 +160,18 @@ contract BearTrapTest is Test {
         assertEq(bearTrap.tickets(player), 2);
     }
 
-    function test_UseTicketNotOperator() public {
-        bearTrap.createPuzzle(1 ether, "test");
+    function test_UseTicketNotOwner() public {
+        bearTrap.createPuzzle("test");
         _givePlayerTickets(1);
 
         vm.prank(player);
-        vm.expectRevert(IBearTrap.NotOperator.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, player));
         bearTrap.useTicket(player, 0);
     }
 
     function test_UseTicketNoTickets() public {
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
 
-        vm.prank(operatorAddr);
         vm.expectRevert(IBearTrap.NoTickets.selector);
         bearTrap.useTicket(player, 0);
     }
@@ -197,35 +179,29 @@ contract BearTrapTest is Test {
     function test_UseTicketInvalidPuzzleId() public {
         _givePlayerTickets(1);
 
-        vm.prank(operatorAddr);
         vm.expectRevert(IBearTrap.InvalidPuzzleId.selector);
         bearTrap.useTicket(player, 999);
     }
 
     function test_UseTicketAlreadySolved() public {
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
         _givePlayerTickets(2);
 
         // Solve the puzzle first
-        vm.startPrank(operatorAddr);
         bearTrap.useTicket(player, 0);
         bearTrap.markSolved(0, player);
-        vm.stopPrank();
 
         // Try to use ticket on solved puzzle
-        vm.prank(operatorAddr);
         vm.expectRevert(IBearTrap.AlreadySolved.selector);
         bearTrap.useTicket(player, 0);
     }
 
     function test_UseTicketMultiple() public {
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
         _givePlayerTickets(3);
 
-        vm.startPrank(operatorAddr);
         bearTrap.useTicket(player, 0);
         bearTrap.useTicket(player, 0);
-        vm.stopPrank();
 
         assertEq(bearTrap.tickets(player), 1);
     }
@@ -233,57 +209,52 @@ contract BearTrapTest is Test {
     // ==================== markSolved Tests ====================
 
     function test_MarkSolved() public {
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
 
-        vm.prank(operatorAddr);
         vm.expectEmit(true, true, false, false);
         emit IBearTrap.PuzzleSolved(0, player);
         bearTrap.markSolved(0, player);
 
-        (, , bool solved, address winner) = bearTrap.puzzles(0);
+        (string memory clueURI, bool solved, address winner) = bearTrap.puzzles(0);
         assertTrue(solved);
         assertEq(winner, player);
+        assertEq(keccak256(bytes(clueURI)), keccak256(bytes("test")));
     }
 
-    function test_MarkSolvedNotOperator() public {
-        bearTrap.createPuzzle(1 ether, "test");
+    function test_MarkSolvedNotOwner() public {
+        bearTrap.createPuzzle("test");
 
         vm.prank(player);
-        vm.expectRevert(IBearTrap.NotOperator.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, player));
         bearTrap.markSolved(0, player);
     }
 
     function test_MarkSolvedInvalidPuzzleId() public {
-        vm.prank(operatorAddr);
         vm.expectRevert(IBearTrap.InvalidPuzzleId.selector);
         bearTrap.markSolved(999, player);
     }
 
     function test_MarkSolvedAlreadySolved() public {
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
 
-        vm.startPrank(operatorAddr);
         bearTrap.markSolved(0, player);
 
         vm.expectRevert(IBearTrap.AlreadySolved.selector);
         bearTrap.markSolved(0, player);
-        vm.stopPrank();
     }
 
     // ==================== Puzzle Management Tests ====================
 
     function test_CreatePuzzle() public {
-        uint256 prizeAmount = 1 ether;
         string memory clueURI = "ipfs://QmTest123";
 
         vm.expectEmit(true, false, false, true);
-        emit IBearTrap.PuzzleCreated(0, prizeAmount);
-        bearTrap.createPuzzle(prizeAmount, clueURI);
+        emit IBearTrap.PuzzleCreated(0);
+        bearTrap.createPuzzle(clueURI);
 
         assertEq(bearTrap.puzzleCount(), 1);
 
-        (uint256 prize, string memory uri, bool solved, address winner) = bearTrap.puzzles(0);
-        assertEq(prize, prizeAmount);
+        (string memory uri, bool solved, address winner) = bearTrap.puzzles(0);
         assertEq(uri, clueURI);
         assertEq(winner, address(0));
         assertFalse(solved);
@@ -291,14 +262,14 @@ contract BearTrapTest is Test {
 
     function test_CreatePuzzleNotOwner() public {
         vm.prank(player);
-        vm.expectRevert(IBearTrap.NotOwner.selector);
-        bearTrap.createPuzzle(1 ether, "test");
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, player));
+        bearTrap.createPuzzle("test");
     }
 
     function test_MultiplePuzzles() public {
-        bearTrap.createPuzzle(1 ether, "clue1");
-        bearTrap.createPuzzle(2 ether, "clue2");
-        bearTrap.createPuzzle(3 ether, "clue3");
+        bearTrap.createPuzzle("clue1");
+        bearTrap.createPuzzle("clue2");
+        bearTrap.createPuzzle("clue3");
 
         assertEq(bearTrap.puzzleCount(), 3);
     }
@@ -390,12 +361,12 @@ contract BearTrapTest is Test {
 
         // New owner can create puzzles
         vm.prank(player);
-        bearTrap.createPuzzle(1 ether, "test");
+        bearTrap.createPuzzle("test");
     }
 
     function test_TransferOwnershipNotOwner() public {
         vm.prank(player);
-        vm.expectRevert(IBearTrap.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, player));
         bearTrap.transferOwnership(player);
     }
 
@@ -412,29 +383,27 @@ contract BearTrapTest is Test {
 
     function test_FullFlow() public {
         // Create puzzle
-        bearTrap.createPuzzle(1 ether, "ipfs://clue");
+        bearTrap.createPuzzle("ipfs://clue");
 
         // Player buys tickets
         _givePlayerTickets(2);
         assertEq(bearTrap.tickets(player), 2);
 
-        // Operator burns a ticket (wrong guess)
-        vm.prank(operatorAddr);
+        // Owner burns a ticket (wrong guess)
         bearTrap.useTicket(player, 0);
         assertEq(bearTrap.tickets(player), 1);
 
-        // Operator burns another ticket (correct guess this time)
-        vm.prank(operatorAddr);
+        // Owner burns another ticket (correct guess this time)
         bearTrap.useTicket(player, 0);
         assertEq(bearTrap.tickets(player), 0);
 
-        // Operator marks solved after redeemDelegations succeeds
-        vm.prank(operatorAddr);
+        // Owner marks solved after redeemDelegations succeeds
         bearTrap.markSolved(0, player);
 
-        (, , bool solved, address winner) = bearTrap.puzzles(0);
+        (string memory clueURI, bool solved, address winner) = bearTrap.puzzles(0);
         assertTrue(solved);
         assertEq(winner, player);
+        assertEq(keccak256(bytes(clueURI)), keccak256(bytes("ipfs://clue")));
     }
 
     // ==================== Helpers ====================

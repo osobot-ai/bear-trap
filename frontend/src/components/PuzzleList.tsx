@@ -131,22 +131,19 @@ export function PuzzleList() {
           {puzzlesData?.map((result, index) => {
             if (result.status !== "success" || !result.result) return null;
 
-            // puzzles() returns: (bytes32 solutionHash, uint256 prizeAmount, address winner, bool solved, string clueURI)
+            // puzzles() returns: (string clueURI, bool solved, address winner)
             const puzzle = result.result as unknown as [
-              `0x${string}`, // solutionHash
-              bigint,        // prizeAmount
-              Address,       // winner
+              string,        // clueURI
               boolean,       // solved
-              string         // clueURI
+              Address,       // winner
             ];
 
             return (
               <PuzzleCard
                 key={index}
                 puzzleId={index}
-                prize={puzzle[1]}
-                clueURI={puzzle[4]}
-                solved={puzzle[3]}
+                clueURI={puzzle[0]}
+                solved={puzzle[1]}
                 winner={puzzle[2]}
               />
             );

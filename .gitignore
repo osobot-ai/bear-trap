@@ -27,3 +27,6 @@ Thumbs.db
 *.log
 cache/
 out/
+
+# SQLite database
+data/

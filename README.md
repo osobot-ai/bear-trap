@@ -42,13 +42,13 @@ Player              Frontend / API           BearTrap         Boundless         
 
 1. **Buy Tickets**: Players burn $OSO tokens (sent to `0xdead`) to purchase guess tickets on the BearTrap contract
 2. **Submit Guess**: Player enters their passphrase in the frontend and clicks "Solve Puzzle"
-3. **Ticket Burn**: The backend operator wallet calls `useTicket()` on-chain, consuming one ticket before proof generation begins
+3. **Ticket Burn**: The backend owner wallet calls `useTicket()` on-chain, consuming one ticket before proof generation begins
 4. **Proof Generation**: The backend passes the guess + the correct answer hash (stored server-side, never on-chain) to the RISC0 guest program via Boundless. If the guess is wrong, the guest assertion fails and no proof is generated — but the ticket is already burned
 5. **Claim Prize**: If the proof succeeds, the frontend receives the seal + journal and calls `redeemDelegations()` on the DelegationManager. The ZKPEnforcer verifies the proof on-chain and the ETH prize transfers to the winner
 
 ### Key Design: Private Answer + On-Chain Ticket Burn
 
-The answer hash is never stored on-chain — it lives only on the backend. This prevents users from checking their guess offline without paying. Tickets are burned on-chain before proof generation, ensuring every attempt has an economic cost regardless of outcome.
+The answer hash is never stored on-chain — it lives only in a local SQLite database. This prevents users from checking their guess offline without paying. Tickets are burned on-chain before proof generation, ensuring every attempt has an economic cost regardless of outcome.
 
 ```
 Wrong guess: ticket burned → proof fails → no prize
@@ -67,6 +67,7 @@ Right guess: ticket burned → proof generated → redeemDelegations → ETH pri
 | Token | $OSO on Base (`0xc78fabc2cb5b9cf59e0af3da8e3bc46d47753a4e`) |
 | Frontend | Next.js 14, viem, wagmi, ConnectKit |
 | Backend | Next.js API routes + Rust prover binary |
+| Puzzle Storage | SQLite (local, gitignored) |
 | Deployment | Base mainnet (chainId: 8453) |
 
 ## Project Structure
@@ -75,12 +76,12 @@ Right guess: ticket burned → proof generated → redeemDelegations → ETH pri
 bear-trap/
 ├── contracts/                # Solidity contracts (Foundry)
 │   ├── src/
-│   │   ├── BearTrap.sol           # Ticket sales, operator-controlled burn, puzzle lifecycle
+│   │   ├── BearTrap.sol           # Ticket sales, owner-controlled burn, puzzle lifecycle (uses OZ Ownable)
 │   │   ├── IBearTrap.sol          # Interface + events + errors
 │   │   ├── ZKPEnforcer.sol        # Custom ERC-7710 caveat enforcer (proof + solver verification)
 │   │   └── ImageID.sol            # Auto-generated RISC0 image ID
 │   ├── test/
-│   │   ├── BearTrap.t.sol         # 27 tests (all passing)
+│   │   ├── BearTrap.t.sol         # 25 tests (all passing)
 │   │   └── Elf.sol                # Auto-generated ELF binary
 │   └── scripts/
 │       └── Deploy.s.sol           # Deployment script
@@ -92,7 +93,7 @@ bear-trap/
 ├── frontend/                 # Next.js web app
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── api/prove/route.ts # Backend: ticket burn + proof generation
+│   │   │   ├── api/prove/route.ts # Backend: ticket burn + proof generation (reads from SQLite)
 │   │   │   └── ...
 │   │   ├── components/
 │   │   │   ├── BuyTickets.tsx     # $OSO approve + burn for tickets
@@ -105,7 +106,11 @@ bear-trap/
 │   │       ├── abi/               # Contract ABIs
 │   │       ├── contracts.ts       # Addresses + constants
 │   │       └── wagmi.ts           # Wagmi config (Base)
+│   ├── scripts/
+│   │   └── manage-puzzle.ts       # CLI for managing puzzles in SQLite
 │   └── package.json
+├── data/                     # SQLite database (gitignored)
+│   └── puzzles.db                 # Puzzle answers, delegations, metadata
 ├── lib/                      # Git submodules
 │   ├── delegation-framework/      # MetaMask Delegation Framework
 │   └── risc0-ethereum/            # RISC0 Ethereum contracts
@@ -148,7 +153,7 @@ bear-trap/
 ### Smart Contracts
 
 ```bash
-# Run tests (27 tests)
+# Run tests (25 tests)
 forge test
 
 # Deploy
@@ -189,12 +194,31 @@ OPERATOR_PRIVATE_KEY=0x...
 RPC_URL=https://mainnet.base.org
 BOUNDLESS_PRIVATE_KEY=0x...
 PINATA_JWT=...
-PUZZLE_ANSWERS={"0":"0xabcdef..."}
 ```
 
 ### Creating a Puzzle (Admin)
 
-After deployment, the contract owner creates puzzles:
+Puzzles are managed via the `manage-puzzle` CLI script and created on-chain.
+
+**Step 1: Initialize the SQLite database** (first time only):
+
+```bash
+cd frontend
+npx tsx scripts/manage-puzzle.ts init
+```
+
+**Step 2: Add the puzzle to the database:**
+
+```bash
+npx tsx scripts/manage-puzzle.ts create \
+  --answer "the secret passphrase" \
+  --prize "1.0" \
+  --delegation '{"chain":8453,"delegationManager":"0x..."}'
+```
+
+This auto-computes the SHA-256 hash and stores the answer, delegation, and metadata.
+
+**Step 3: Create the puzzle on-chain:**
 
 ```bash
 cast send $BEAR_TRAP_ADDRESS \
@@ -204,16 +228,10 @@ cast send $BEAR_TRAP_ADDRESS \
   --private-key $PRIVATE_KEY
 ```
 
-Then fund the contract with the prize ETH:
+**Step 4: Fund and delegate:**
 
 ```bash
 cast send $BEAR_TRAP_ADDRESS --value 1ether --rpc-url $RPC_URL --private-key $PRIVATE_KEY
-```
-
-Store the answer hash in the backend's `PUZZLE_ANSWERS` env var:
-
-```bash
-PUZZLE_ANSWERS='{"0":"0x<sha256-of-answer>"}'
 ```
 
 Create an ERC-7710 delegation from the Treasury Safe with:
@@ -221,11 +239,23 @@ Create an ERC-7710 delegation from the Treasury Safe with:
 - **NativeTokenTransferAmountEnforcer** (maxAmount = prize ETH)
 - **LimitedCallsEnforcer** (limit: 1)
 
+**Updating a puzzle's delegation or prize:**
+
+```bash
+npx tsx scripts/manage-puzzle.ts update --id 0 --prize "2.0" --delegation '{"new":"delegation"}'
+```
+
+**Listing all puzzles:**
+
+```bash
+npx tsx scripts/manage-puzzle.ts list
+```
+
 ## Contracts
 
 | Contract | Description |
 |----------|-------------|
-| `BearTrap.sol` | Ticket sales (`buyTickets`), operator-controlled ticket burn (`useTicket`), puzzle lifecycle (`createPuzzle`, `markSolved`) |
+| `BearTrap.sol` | Ticket sales (`buyTickets`), owner-controlled ticket burn (`useTicket`), puzzle lifecycle (`createPuzzle`, `markSolved`). Uses OpenZeppelin Ownable. |
 | `ZKPEnforcer.sol` | Custom ERC-7710 caveat enforcer — validates RISC0 proofs and binds them to the solver's address |
 | `IBearTrap.sol` | Interface defining Puzzle struct, events, errors |
 | `ImageID.sol` | Auto-generated RISC0 guest program image ID |
@@ -246,10 +276,10 @@ _Placeholder — update after deployment:_
 
 ## Security
 
-1. **Private answers**: Solution hashes are stored server-side only — never on-chain. Users cannot check guesses offline.
+1. **Private answers**: Solution hashes are stored in a local SQLite database — never on-chain. Users cannot check guesses offline.
 2. **Front-running protection**: The actual answer is never visible in the mempool or on-chain. Only the ZK proof (which reveals nothing about the answer) is submitted.
 3. **Proof bound to solver**: Journal commits the solver's address, preventing proof theft.
-4. **Economic deterrent**: Tickets are burned on-chain by the operator before proof generation begins. Every attempt costs $OSO regardless of outcome.
+4. **Economic deterrent**: Tickets are burned on-chain by the owner before proof generation begins. Every attempt costs $OSO regardless of outcome.
 5. **Single winner**: LimitedCallsEnforcer on the delegation ensures only the first correct solver claims the prize.
 6. **On-chain verification**: Proofs are verified by the Boundless verifier contract (IRiscZeroVerifier) via the ZKPEnforcer during delegation redemption.
 

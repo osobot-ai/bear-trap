@@ -25,13 +25,6 @@ export const bearTrapAbi = [
   },
   {
     type: "function",
-    name: "operator",
-    inputs: [],
-    outputs: [{ name: "", type: "address", internalType: "address" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
     name: "puzzleCount",
     inputs: [],
     outputs: [{ name: "", type: "uint256", internalType: "uint256" }],
@@ -42,11 +35,6 @@ export const bearTrapAbi = [
     name: "puzzles",
     inputs: [{ name: "puzzleId", type: "uint256", internalType: "uint256" }],
     outputs: [
-      {
-        name: "prizeAmount",
-        type: "uint256",
-        internalType: "uint256",
-      },
       { name: "clueURI", type: "string", internalType: "string" },
       { name: "solved", type: "bool", internalType: "bool" },
       { name: "winner", type: "address", internalType: "address" },
@@ -98,22 +86,8 @@ export const bearTrapAbi = [
   },
   {
     type: "function",
-    name: "setOperator",
-    inputs: [
-      { name: "_operator", type: "address", internalType: "address" },
-    ],
-    outputs: [],
-    stateMutability: "nonpayable",
-  },
-  {
-    type: "function",
     name: "createPuzzle",
     inputs: [
-      {
-        name: "prizeAmount",
-        type: "uint256",
-        internalType: "uint256",
-      },
       { name: "clueURI", type: "string", internalType: "string" },
     ],
     outputs: [],
@@ -128,6 +102,13 @@ export const bearTrapAbi = [
     outputs: [],
     stateMutability: "nonpayable",
   },
+  {
+    type: "function",
+    name: "renounceOwnership",
+    inputs: [],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
 
   // -- Events --
   {
@@ -138,12 +119,6 @@ export const bearTrapAbi = [
         name: "puzzleId",
         type: "uint256",
         indexed: true,
-        internalType: "uint256",
-      },
-      {
-        name: "prizeAmount",
-        type: "uint256",
-        indexed: false,
         internalType: "uint256",
       },
     ],
@@ -212,6 +187,25 @@ export const bearTrapAbi = [
     ],
     anonymous: false,
   },
+  {
+    type: "event",
+    name: "OwnershipTransferred",
+    inputs: [
+      {
+        name: "previousOwner",
+        type: "address",
+        indexed: true,
+        internalType: "address",
+      },
+      {
+        name: "newOwner",
+        type: "address",
+        indexed: true,
+        internalType: "address",
+      },
+    ],
+    anonymous: false,
+  },
 
   // -- Errors --
   {
@@ -231,13 +225,13 @@ export const bearTrapAbi = [
   },
   {
     type: "error",
-    name: "NotOperator",
-    inputs: [],
+    name: "OwnableUnauthorizedAccount",
+    inputs: [{ name: "account", type: "address", internalType: "address" }],
   },
   {
     type: "error",
-    name: "NotOwner",
-    inputs: [],
+    name: "OwnableInvalidOwner",
+    inputs: [{ name: "owner", type: "address", internalType: "address" }],
   },
   {
     type: "error",
