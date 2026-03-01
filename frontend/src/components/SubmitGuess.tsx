@@ -13,25 +13,25 @@ import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
 
 type SubmitStep =
   | "idle"
-  | "hashing"
-  | "awaiting-proof"
+  | "proving"
   | "submitting"
   | "confirming"
   | "success"
   | "error";
+
+interface ProveResult {
+  seal: string;
+  journal: string;
+  solverAddress: string;
+  solutionHash: string;
+}
 
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
   const [puzzleId, setPuzzleId] = useState("0");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
-  const [passphraseHash, setPassphraseHash] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
-
-  // Proof data inputs (from CLI prover output)
-  const [sealHex, setSealHex] = useState("");
-  const [journalHex, setJournalHex] = useState("");
-  const [delegationHex, setDelegationHex] = useState("");
 
   // Read puzzle count for the selector
   const { data: puzzleCount } = useReadContract({
@@ -66,41 +66,38 @@ export function SubmitGuess() {
   const tickets = ticketBalance ? Number(ticketBalance) : 0;
   const hasTickets = tickets > 0;
 
-  // Hash passphrase with SHA-256 via Web Crypto API
-  const hashPassphrase = useCallback(async () => {
-    if (!passphrase.trim()) return;
+  // Main flow: generate proof via API then submit on-chain
+  const handleSolvePuzzle = useCallback(async () => {
+    if (!passphrase.trim() || !address) return;
 
-    setStep("hashing");
+    setStep("proving");
     setErrorMessage("");
 
     try {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(passphrase);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex =
-        "0x" + hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-      setPassphraseHash(hashHex);
-      setStep("awaiting-proof");
-    } catch {
-      setErrorMessage("Failed to hash passphrase");
-      setStep("error");
-    }
-  }, [passphrase]);
+      // Step 1: Call the /api/prove endpoint to generate a ZK proof
+      const response = await fetch("/api/prove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          passphrase: passphrase.trim(),
+          solverAddress: address,
+          puzzleId: parseInt(puzzleId),
+        }),
+      });
 
-  // Submit the guess on-chain
-  const handleSubmit = useCallback(() => {
-    if (!sealHex.trim() || !journalHex.trim()) {
-      setErrorMessage("Seal and journal hex are required");
-      return;
-    }
+      const data = await response.json();
 
-    setStep("submitting");
-    setErrorMessage("");
+      if (!response.ok) {
+        throw new Error(data.error || "Proof generation failed");
+      }
 
-    try {
-      const seal = sealHex.trim() as Hex;
-      const journal = journalHex.trim() as Hex;
+      const proofResult = data as ProveResult;
+
+      // Step 2: Auto-construct the delegation redemption transaction
+      setStep("submitting");
+
+      const seal = proofResult.seal as Hex;
+      const journal = proofResult.journal as Hex;
 
       // Construct ZKPEnforcer caveat args: abi.encode(bytes seal, bytes journal)
       const caveatArgs = encodeAbiParameters(
@@ -108,27 +105,17 @@ export function SubmitGuess() {
         [seal, journal]
       );
 
-      // Build permissionContexts, modes, executionCallDatas
-      // The delegation data encodes the full delegation chain
-      let permissionContexts: Hex[];
-      if (delegationHex.trim()) {
-        // User provided pre-encoded delegation context
-        permissionContexts = [delegationHex.trim() as Hex];
-      } else {
-        // Encode minimal: just the caveat args for now
-        // In production, this would include the full signed delegation
-        permissionContexts = [caveatArgs];
-      }
+      // Build permissionContexts with the caveat args
+      const permissionContexts: Hex[] = [caveatArgs];
 
       // ModeCode for single default execution (bytes32 of zeros)
       const defaultMode =
         "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
 
       // Execution calldata: ETH transfer to solver
-      // In production, this encodes the target, value, and calldata for the prize transfer
       const executionCallData = encodeAbiParameters(
         [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
-        [address!, BigInt(0), "0x" as Hex]
+        [address, BigInt(0), "0x" as Hex]
       );
 
       submitGuess({
@@ -147,19 +134,16 @@ export function SubmitGuess() {
       setStep("confirming");
     } catch (err) {
       setErrorMessage(
-        err instanceof Error ? err.message : "Failed to submit guess"
+        err instanceof Error ? err.message : "Failed to generate proof"
       );
       setStep("error");
     }
-  }, [sealHex, journalHex, delegationHex, puzzleId, address, submitGuess]);
+  }, [passphrase, address, puzzleId, submitGuess]);
 
   // Reset flow
   const handleReset = useCallback(() => {
     setStep("idle");
-    setPassphraseHash("");
-    setSealHex("");
-    setJournalHex("");
-    setDelegationHex("");
+    setPassphrase("");
     setErrorMessage("");
   }, []);
 
@@ -186,7 +170,7 @@ export function SubmitGuess() {
             </svg>
           </div>
           <div>
-            <h3 className="font-display text-lg text-white">Submit Guess</h3>
+            <h3 className="font-display text-lg text-white">Solve Puzzle</h3>
             <p className="text-xs text-trap-muted">
               ZK-verified via Boundless
             </p>
@@ -195,8 +179,8 @@ export function SubmitGuess() {
       </div>
 
       <div className="p-6 space-y-5">
-        {/* Step 1: Puzzle selector + passphrase (idle / hashing) */}
-        {(step === "idle" || step === "hashing") && (
+        {/* Step 1: Puzzle selector + passphrase (idle) */}
+        {step === "idle" && (
           <>
             {/* Puzzle selector */}
             <div>
@@ -224,7 +208,7 @@ export function SubmitGuess() {
             {/* Passphrase input */}
             <div>
               <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
-                Your Guess (Passphrase)
+                Secret Passphrase
               </label>
               <input
                 type="text"
@@ -254,16 +238,15 @@ export function SubmitGuess() {
                 </svg>
                 <div className="text-xs text-trap-muted leading-relaxed">
                   <p>
-                    Your guess is hashed locally with SHA-256. You then generate
-                    a ZK proof using the CLI prover and paste the proof data
-                    below. The proof is verified on-chain via the Boundless
-                    verifier.
+                    Enter the secret passphrase. A zero-knowledge proof will be
+                    generated to verify your answer without revealing it
+                    on-chain.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Hash button */}
+            {/* Solve button */}
             {!isConnected ? (
               <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4 text-center">
                 <p className="text-xs text-trap-muted font-mono">
@@ -273,117 +256,45 @@ export function SubmitGuess() {
             ) : (
               <button
                 disabled={
-                  !hasTickets ||
-                  !passphrase.trim() ||
-                  count === 0 ||
-                  step === "hashing"
+                  !hasTickets || !passphrase.trim() || count === 0
                 }
                 className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
-                onClick={hashPassphrase}
+                onClick={handleSolvePuzzle}
               >
                 {!hasTickets
                   ? "No tickets -- buy tickets first"
                   : count === 0
                   ? "No puzzles available"
-                  : step === "hashing"
-                  ? "Hashing..."
-                  : "Hash Passphrase & Continue"}
+                  : "Solve Puzzle"}
               </button>
             )}
           </>
         )}
 
-        {/* Step 2: Paste proof data (awaiting-proof) */}
-        {step === "awaiting-proof" && (
-          <>
-            {/* Hash result */}
-            <div className="rounded-lg border border-trap-green/20 bg-trap-green/5 p-4">
-              <p className="text-xs font-mono text-trap-green mb-1 uppercase tracking-wider">
-                SHA-256 Hash
-              </p>
-              <p className="font-mono text-xs text-trap-text break-all">
-                {passphraseHash}
-              </p>
-            </div>
-
-            {/* CLI instructions */}
-            <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4">
-              <p className="text-xs font-mono text-trap-amber mb-2 uppercase tracking-wider">
-                Generate Proof
-              </p>
-              <div className="text-xs text-trap-muted leading-relaxed space-y-2">
-                <p>Run the Bear Trap CLI prover to generate your ZK proof:</p>
-                <pre className="bg-trap-black/80 rounded p-3 text-trap-text overflow-x-auto">
-                  {`cargo run --bin bear-trap-app -- \\
-  --guess "${passphrase}" \\
-  --solver-address ${address} \\
-  --puzzle-id ${puzzleId} \\
-  --output-only`}
-                </pre>
-                <p>Paste the seal and journal hex from the output below:</p>
-              </div>
-            </div>
-
-            {/* Seal input */}
-            <div>
-              <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
-                Seal (proof bytes)
-              </label>
-              <textarea
-                value={sealHex}
-                onChange={(e) => setSealHex(e.target.value)}
-                rows={3}
-                className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-xs text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all resize-none"
-                placeholder="0x..."
-              />
-            </div>
-
-            {/* Journal input */}
-            <div>
-              <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
-                Journal (public outputs)
-              </label>
-              <textarea
-                value={journalHex}
-                onChange={(e) => setJournalHex(e.target.value)}
-                rows={3}
-                className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-xs text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all resize-none"
-                placeholder="0x..."
-              />
-            </div>
-
-            {/* Delegation data (optional) */}
-            <div>
-              <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
-                Delegation Context{" "}
-                <span className="text-trap-muted/60">(optional)</span>
-              </label>
-              <textarea
-                value={delegationHex}
-                onChange={(e) => setDelegationHex(e.target.value)}
-                rows={2}
-                className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-xs text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all resize-none"
-                placeholder="0x... (pre-encoded permissionContext from delegation)"
-              />
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={handleReset}
-                className="flex-1 rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
+        {/* Step 2: Generating proof */}
+        {step === "proving" && (
+          <div className="py-8 text-center space-y-4">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
+              <svg
+                className="h-5 w-5 text-trap-green animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
               >
-                Back
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={!sealHex.trim() || !journalHex.trim()}
-                className="flex-1 rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Submit Proof On-Chain
-              </button>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
             </div>
-          </>
+            <div>
+              <p className="font-mono text-sm text-trap-text">
+                Generating ZK proof...
+              </p>
+              <p className="text-xs text-trap-muted mt-1">
+                This may take 1-3 minutes. The Boundless network is generating
+                a zero-knowledge proof of your answer.
+              </p>
+            </div>
+          </div>
         )}
 
         {/* Step 3: Submitting / Confirming */}
@@ -406,7 +317,7 @@ export function SubmitGuess() {
                   ? "Waiting for wallet confirmation..."
                   : isConfirming
                   ? "Confirming transaction..."
-                  : "Processing..."}
+                  : "Submitting proof on-chain..."}
               </p>
               <p className="text-xs text-trap-muted mt-1">
                 {isConfirming && submitHash

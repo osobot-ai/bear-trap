@@ -1,4 +1,5 @@
-import { createConfig, http } from "wagmi";
+import { createConfig } from "wagmi";
+import { http } from "viem";
 import { base } from "wagmi/chains";
 import { getDefaultConfig } from "connectkit";
 
@@ -15,9 +16,3 @@ export const config = createConfig(
     appUrl: "https://beartrap.xyz",
   })
 );
-
-declare module "wagmi" {
-  interface Register {
-    config: typeof config;
-  }
-}

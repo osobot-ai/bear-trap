@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-alloy = { workspace = true, features = ["sol-types", "signers", "signer-local", "providers", "provider-http", "network", "consensus", "rpc-types", "contract"] }
+alloy = { workspace = true, features = ["sol-types", "signers", "signer-local"] }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
 anyhow = { workspace = true }
