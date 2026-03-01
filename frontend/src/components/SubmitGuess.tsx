@@ -10,7 +10,7 @@ import {
 import { encodeAbiParameters, type Hex } from "viem";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { delegationManagerAbi } from "@/lib/abi/delegationManager";
-import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
+import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL } from "@/lib/contracts";
 
 type SubmitStep =
   | "idle"
@@ -78,7 +78,7 @@ export function SubmitGuess() {
     setProofData(null);
 
     try {
-      const response = await fetch("/api/prove", {
+      const response = await fetch(`${BACKEND_URL}/api/prove`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

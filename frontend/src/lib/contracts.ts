@@ -20,3 +20,7 @@ export const DELEGATION_MANAGER_ADDRESS: Address =
  */
 export const TICKET_PRICE_DISPLAY = "1,000";
 export const TICKET_PRICE_RAW = BigInt("1000000000000000000000"); // 1000 * 1e18
+
+/** Backend API URL (Rust axum server on Railway). */
+export const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001";

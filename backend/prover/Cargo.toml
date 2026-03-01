@@ -1,0 +1,25 @@
+[package]
+name = "prover"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+# TODO: Boundless SDK and RISC0 dependencies.
+# These require git deps from the boundless repo and may need special setup.
+# Uncomment and configure once Boundless SDK crate is available:
+#
+# boundless-market = { version = "1.0" }
+# risc0-zkvm = { version = "3.0.3", default-features = true }
+# alloy = { workspace = true, features = ["sol-types", "signers", "signer-local"] }
+# alloy-primitives = { workspace = true }
+# alloy-sol-types = { workspace = true }
+#
+# The guest ELF would be imported via:
+# guests = { path = "../../guests" }

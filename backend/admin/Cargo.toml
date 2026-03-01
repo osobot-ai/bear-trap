@@ -1,0 +1,15 @@
+[package]
+name = "bear-trap-admin"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "bear-trap-admin"
+path = "src/main.rs"
+
+[dependencies]
+shared = { workspace = true }
+clap = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

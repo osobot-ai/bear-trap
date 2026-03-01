@@ -1,11 +1,10 @@
 
-import { type Address } from "viem";
-
 interface PuzzleCardProps {
   puzzleId: number;
   clueURI: string;
+  prizeEth: string | null;
   solved: boolean;
-  winner: Address;
+  winner: string;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -18,6 +17,7 @@ function truncateAddress(address: string): string {
 export function PuzzleCard({
   puzzleId,
   clueURI,
+  prizeEth,
   solved,
   winner,
 }: PuzzleCardProps) {
@@ -77,6 +77,16 @@ export function PuzzleCard({
 
       {/* Details */}
       <div className="space-y-3">
+        {/* Prize display */}
+        {prizeEth && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-mono text-trap-muted">Prize</span>
+            <span className="text-sm font-mono font-medium text-trap-green">
+              {prizeEth} ETH
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <span className="text-xs font-mono text-trap-muted">Clue</span>
           {clueURI ? (

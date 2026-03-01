@@ -1,227 +1,323 @@
-# AGENTS.md — Bear Trap v2 Refactor: Full Architecture Overhaul
+# AGENTS.md — Bear Trap Major Refactor: Rust API Backend + Frontend Separation
 
 ## Overview
-Major refactor: remove solutionHash from on-chain, move answer verification to backend + ZKP, split ticket buying/burning, remove submitGuess entirely. Users claim prizes via redeemDelegations directly.
+Restructure Bear Trap into a clean frontend/backend split:
+- **Frontend (Vercel):** Next.js static frontend only. No API routes. Calls the Rust backend.
+- **Backend (Railway):** Rust axum API server with SQLite. Handles proving, ticket burns, puzzle data.
+- **Admin CLI:** Separate Rust binary for puzzle/delegation management via `railway run`.
 
 ## Architecture
 
-### Flow
-1. User calls `buyTickets(amount)` on BearTrap contract (burns $OSO, increments tickets[user])
-2. User enters passphrase in frontend, clicks "Solve Puzzle"
-3. Frontend calls `/api/prove` with `{ passphrase, solverAddress, puzzleId }`
-4. Backend calls `useTicket(user, puzzleId)` on-chain via operator wallet (decrements ticket)
-5. Backend reads the CORRECT answer hash from server-side config (NOT from chain)
-6. Backend passes `(guess, solverAddress, expectedHash)` as private input to RISC0 guest via Boundless
-7. If wrong answer → guest assertion fails → proof generation fails → return error "Wrong guess" → ticket already burned
-8. If right answer → proof generated → return `{ seal, journal }` to frontend
-9. Frontend calls `redeemDelegations()` on DelegationManager directly with the proof
-10. ZKPEnforcer verifies proof → delegation executes → ETH prize to solver
+```
+Vercel (Next.js)              Railway (Rust axum)
+  │                               │
+  │  GET /api/puzzles ───────────>│──> SQLite
+  │  GET /api/puzzles/:id ───────>│──> SQLite
+  │  POST /api/prove ────────────>│──> useTicket on-chain
+  │                               │──> Boundless proof
+  │<── { seal, journal, delegation }
+  │
+  │  redeemDelegations() ────────> DelegationManager (on-chain)
+```
 
-### Key Design Decisions
-- solutionHash is NEVER stored on-chain (prevents free offline checking)
-- Tickets tracked on-chain (transparent, verifiable)
-- Backend is the only entity that can burn tickets (operator role)
-- submitGuess() is REMOVED — users call redeemDelegations directly
-- The ZKP proves the user knew the answer without revealing it
+## Repo Structure (Target)
 
-## Contract Changes (`contracts/src/BearTrap.sol`)
+```
+bear-trap/
+├── contracts/                    # Unchanged — Solidity (Foundry)
+│   ├── src/
+│   │   ├── BearTrap.sol          # Ownable, buyTickets, useTicket, markSolved, createPuzzle
+│   │   ├── IBearTrap.sol
+│   │   ├── ZKPEnforcer.sol
+│   │   └── ImageID.sol
+│   ├── test/BearTrap.t.sol
+│   └── scripts/Deploy.s.sol
+├── guests/                       # Unchanged — RISC0 guest program
+│   └── puzzle-solver/src/main.rs
+├── backend/                      # NEW — Rust workspace for API + admin + shared
+│   ├── Cargo.toml                # Workspace root
+│   ├── api/                      # axum HTTP server
+│   │   ├── Cargo.toml
+│   │   └── src/main.rs
+│   ├── admin/                    # CLI tool for puzzle/delegation management
+│   │   ├── Cargo.toml
+│   │   └── src/main.rs
+│   ├── prover/                   # Boundless proof logic (library)
+│   │   ├── Cargo.toml
+│   │   └── src/lib.rs
+│   └── shared/                   # DB schema, models, queries (library)
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs
+│           └── db.rs
+├── frontend/                     # Next.js — frontend ONLY, no API routes
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   └── providers.tsx     # NO api/ directory anymore
+│   │   ├── components/
+│   │   │   ├── BuyTickets.tsx
+│   │   │   ├── SubmitGuess.tsx   # Calls BACKEND_URL/api/prove
+│   │   │   ├── PuzzleList.tsx    # Calls BACKEND_URL/api/puzzles
+│   │   │   ├── PuzzleCard.tsx
+│   │   │   ├── Leaderboard.tsx
+│   │   │   └── WalletButton.tsx
+│   │   └── lib/
+│   │       ├── abi/
+│   │       │   ├── bearTrap.ts
+│   │       │   └── delegationManager.ts  # For redeemDelegations
+│   │       ├── contracts.ts
+│   │       └── wagmi.ts
+│   └── package.json
+├── Dockerfile                    # Builds api + admin binaries for Railway
+├── README.md
+└── SPEC.md
+```
 
-### Remove
-- `submitGuess()` function entirely
-- `solutionHash` from the `Puzzle` struct (keep puzzleId, clueURI, prize amount, solved, winner)
-- All delegation-related imports and references (IDelegationManager, etc.)
-- The try/catch pattern
+## Backend Implementation Details
 
-### Add
-- `address public operator;` — backend wallet that can call useTicket
-- `function setOperator(address _operator) external onlyOwner;`
-- `function useTicket(address user, uint256 puzzleId) external;` — only callable by operator
-  - Requires `tickets[user] > 0`
-  - Requires puzzle exists and is not solved
-  - Decrements `tickets[user]`
-  - Emits `TicketUsed(uint256 indexed puzzleId, address indexed user, uint256 remainingTickets)`
-- `function markSolved(uint256 puzzleId, address winner) external;` — only callable by operator
-  - Marks puzzle as solved with winner address
-  - Emits `PuzzleSolved(uint256 indexed puzzleId, address indexed winner)`
-  - This is called by backend after confirming the redeemDelegations tx succeeded
+### shared/ (library crate)
+**Cargo.toml deps:** `rusqlite` (with `bundled` feature), `serde`, `serde_json`
 
-### Keep
-- `buyTickets(uint256 amount)` — burns $OSO to dead address, increments tickets
-- `createPuzzle(...)` — owner creates puzzles (remove solutionHash param, keep clueURI and prize)
-- `tickets` mapping
-- `puzzles` mapping (updated struct)
-- `Puzzle` struct: `{ uint256 prizeAmount, string clueURI, bool solved, address winner }`
-- `puzzleCount`
-- All events (adjust as needed)
+**src/db.rs:**
+```rust
+// Database initialization and queries
 
-### Remove from interface (`IBearTrap.sol`)
-- `submitGuess` function signature
-- Any delegation-related types
-- Update Puzzle struct
-- Update events
+pub struct Db { conn: rusqlite::Connection }
 
-## Contract Changes (`contracts/src/ZKPEnforcer.sol`)
-
-### Update terms encoding
-- Old: `abi.encode(bytes32 solutionHash, bytes32 imageId)`
-- New: `abi.encode(bytes32 imageId)` — just the image ID, no solution hash
-- Remove the `SolutionHashMismatch` error and the hash comparison check
-- The enforcer now ONLY verifies:
-  1. The RISC0 proof is valid: `verifier.verify(seal, imageId, sha256(journal))`
-  2. The solver address matches the redeemer
-- The correctness of the answer was already guaranteed by the guest program assertion during proof generation
-
-### Updated beforeHook logic
-```solidity
-function beforeHook(...) public override {
-    bytes32 imageId = abi.decode(_terms, (bytes32));
-    (bytes memory seal, bytes memory journal) = abi.decode(_args, (bytes, bytes));
+impl Db {
+    pub fn open(path: &str) -> Result<Self>;
+    pub fn init(&self) -> Result<()>;  // CREATE TABLE IF NOT EXISTS
     
-    // Verify RISC0 proof
-    verifier.verify(seal, imageId, sha256(journal));
+    // Puzzles
+    pub fn create_puzzle(&self, solution_hash: &str, clue_uri: &str) -> Result<i64>;
+    pub fn get_puzzle(&self, id: i64) -> Result<Option<Puzzle>>;
+    pub fn list_puzzles(&self) -> Result<Vec<Puzzle>>;
+    pub fn mark_solved(&self, id: i64, winner: &str) -> Result<()>;
     
-    // Decode journal and verify solver
-    (address solverAddress, bytes32 solutionHash) = abi.decode(journal, (address, bytes32));
-    if (solverAddress != _redeemer) revert SolverAddressMismatch();
-    
-    emit ProofVerified(_redeemer, solutionHash, imageId);
+    // Delegations
+    pub fn add_delegation(&self, puzzle_id: i64, delegation_json: &str, prize_eth: &str) -> Result<i64>;
+    pub fn update_delegation(&self, puzzle_id: i64, delegation_json: &str, prize_eth: &str) -> Result<()>;
+    pub fn get_active_delegation(&self, puzzle_id: i64) -> Result<Option<Delegation>>;
+}
+
+pub struct Puzzle {
+    pub id: i64,
+    pub solution_hash: String,
+    pub clue_uri: String,
+    pub solved: bool,
+    pub winner: Option<String>,
+    pub prize_eth: Option<String>,      // from active delegation
+    pub created_at: String,
+}
+
+pub struct Delegation {
+    pub id: i64,
+    pub puzzle_id: i64,
+    pub delegation_json: String,
+    pub prize_eth: String,
+    pub active: bool,
+    pub created_at: String,
 }
 ```
 
-## Guest Program Changes (`guests/puzzle-solver/src/main.rs`)
-- NO CHANGES NEEDED — the guest already:
-  1. Takes `(guess, solverAddress, expectedHash)` as private input
-  2. Hashes guess with SHA-256
-  3. Asserts hash matches expectedHash
-  4. Commits `(solverAddress, solutionHash)` to journal
-- The only difference is that `expectedHash` now comes from the backend, not from on-chain
+**SQL Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS puzzles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    solution_hash TEXT NOT NULL,
+    clue_uri TEXT NOT NULL DEFAULT '',
+    solved INTEGER NOT NULL DEFAULT 0,
+    winner TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-## Rust App Changes (`apps/src/main.rs`)
-- Remove the `--puzzle-id` arg (not needed for proof generation)
-- Keep: `--guess`, `--solver-address`
-- Add: `--expected-hash` (the backend passes the correct answer hash)
-- The app receives the correct hash from the backend, NOT from chain
-- Output: JSON `{ "seal": "0x...", "journal": "0x...", "solverAddress": "0x...", "solutionHash": "0x..." }`
-- On proof failure (wrong answer), exit with non-zero code and error on stderr
-
-## Frontend API Route (`frontend/src/app/api/prove/route.ts`)
-
-### Flow
-1. Receive POST `{ passphrase, solverAddress, puzzleId }`
-2. Verify puzzle exists and isn't solved (read from contract)
-3. Call `useTicket(solverAddress, puzzleId)` on BearTrap via operator wallet
-4. Wait for useTicket tx to confirm
-5. Read the correct answer hash from server-side config: `PUZZLE_ANSWERS` env var or a JSON file
-   - Format: `{ "0": "0xabcdef...", "1": "0x123456..." }` mapping puzzleId to answer hash
-6. Call the Rust binary: `bear-trap-app --guess "..." --solver-address "..." --expected-hash "0x..."`
-7. If binary succeeds → return `{ seal, journal, solverAddress, solutionHash }`
-8. If binary fails → return `{ error: "Wrong guess. Your ticket has been consumed." }`
-
-### Env vars needed
-- `PROVER_BINARY_PATH` — path to compiled bear-trap-app
-- `OPERATOR_PRIVATE_KEY` — wallet key for calling useTicket (funded with ETH for gas)
-- `RPC_URL` — Base RPC
-- `PINATA_JWT` — for Boundless proof uploads
-- `BOUNDLESS_PRIVATE_KEY` — wallet key for submitting proof requests to Boundless market
-- `PUZZLE_ANSWERS` — JSON string mapping puzzleId to answer hash, e.g. `{"0":"0xabc..."}`
-- `BEAR_TRAP_ADDRESS` — contract address
-- `NEXT_PUBLIC_BEAR_TRAP_ADDRESS` — same, for frontend
-- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`
-- `NEXT_PUBLIC_DELEGATION_MANAGER_ADDRESS` — DelegationManager on Base
-
-### Important: The API route needs to use viem for calling useTicket
-```typescript
-import { createWalletClient, http, createPublicClient } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { base } from 'viem/chains';
+CREATE TABLE IF NOT EXISTS delegations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    puzzle_id INTEGER NOT NULL REFERENCES puzzles(id),
+    delegation_json TEXT NOT NULL,
+    prize_eth TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-## Frontend Changes (`frontend/src/components/SubmitGuess.tsx`)
+### api/ (binary crate — axum server)
+**Cargo.toml deps:** `axum`, `tokio`, `tower-http` (cors), `serde`, `serde_json`, shared (path dep), prover (path dep)
 
-### Rewrite the flow
-1. `idle` — Puzzle selector + passphrase input + "Solve Puzzle" button
-   - Show ticket balance
-   - Show info: "Enter the secret passphrase. A ZK proof will verify your answer. Each attempt costs one ticket."
-2. `proving` — "Burning ticket & generating proof..." with spinner
-   - Calls `/api/prove` (which handles ticket burn + proof generation)
-   - May take 1-3 minutes
-   - Show "Your ticket has been consumed. Generating zero-knowledge proof..."
-3. `proof-ready` — "Proof generated! Submit to claim your prize."
-   - Auto-constructs the `redeemDelegations` call
-   - User signs the wallet tx
-4. `confirming` — Waiting for tx confirmation
-5. `success` — "Puzzle Solved! Prize claimed."
-6. `wrong` — "Wrong guess. Your ticket was consumed." with option to try again
-7. `error` — Generic error with retry
+**Endpoints:**
 
-### Key change: redeemDelegations instead of submitGuess
-The frontend now calls `redeemDelegations` on the DelegationManager contract directly.
-You'll need the DelegationManager ABI for `redeemDelegations(bytes[] permissionContexts, ModeCode[] modes, bytes[] executionCallDatas)`.
+1. `GET /api/puzzles` — Returns JSON array of puzzles with prize info from active delegation
+   ```json
+   [{ "id": 0, "clueURI": "ipfs://...", "prizeEth": "1.0", "solved": false, "winner": null }]
+   ```
 
-Import the DelegationManager address from contracts.ts:
-```typescript
-export const DELEGATION_MANAGER_ADDRESS = process.env.NEXT_PUBLIC_DELEGATION_MANAGER_ADDRESS as `0x${string}` || "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3";
+2. `GET /api/puzzles/:id` — Returns single puzzle with delegation prize
+   ```json
+   { "id": 0, "clueURI": "ipfs://...", "prizeEth": "1.0", "solved": false, "winner": null }
+   ```
+
+3. `POST /api/prove` — Main proving endpoint
+   - Request: `{ "passphrase": "...", "solverAddress": "0x...", "puzzleId": 0 }`
+   - Flow:
+     1. Read puzzle from DB, check not solved
+     2. Read active delegation from DB
+     3. Call `useTicket(solverAddress, puzzleId)` on BearTrap contract via operator wallet
+     4. Wait for tx confirmation
+     5. Call prover with (guess, solverAddress, solutionHash)
+     6. If proof fails → return `{ "error": "Wrong guess. Your ticket has been consumed.", "ticketBurned": true }`
+     7. If proof succeeds → return `{ "seal": "0x...", "journal": "0x...", "delegation": {...}, "solverAddress": "0x...", "solutionHash": "0x..." }`
+   - The `delegation` field contains the full signed delegation JSON so the frontend can construct the redeemDelegations call
+
+**Environment variables (set in Railway):**
+- `DATABASE_PATH` — path to SQLite file (default: `./data/puzzles.db`)
+- `RPC_URL` — Base RPC endpoint
+- `OPERATOR_PRIVATE_KEY` — wallet for useTicket calls
+- `BOUNDLESS_PRIVATE_KEY` — wallet for Boundless market proof requests  
+- `PINATA_JWT` — for uploading guest ELF to IPFS
+- `BEAR_TRAP_ADDRESS` — deployed BearTrap contract
+- `PORT` — server port (default: 3001)
+
+**CORS:** Allow requests from the Vercel frontend domain (configurable via `FRONTEND_URL` env var, default `*` for dev).
+
+**Important:** For the prover integration, since the Boundless SDK is Rust-native, we can call it directly as a library — no need to shell out to a binary anymore. The prover/ crate wraps the Boundless client logic.
+
+### prover/ (library crate)
+**Cargo.toml deps:** `boundless-market`, `alloy`, `risc0-zkvm`, `sha2`, `tokio`
+
+**src/lib.rs:**
+```rust
+pub struct ProverConfig {
+    pub rpc_url: String,
+    pub private_key: String,
+    pub pinata_jwt: Option<String>,
+}
+
+pub struct ProofResult {
+    pub seal: Vec<u8>,
+    pub journal: Vec<u8>,
+    pub solver_address: String,
+    pub solution_hash: String,
+}
+
+pub async fn generate_proof(
+    config: &ProverConfig,
+    guess: &str,
+    solver_address: &str,
+    expected_hash: &str,
+) -> Result<ProofResult>;
 ```
 
-The permissionContexts, modes, and executionCallDatas construction stays similar to what was there before — the proof data (seal + journal) goes into the caveat args.
+This is essentially the logic from the old `apps/src/main.rs` but as a library function.
+Import the guest ELF via the risc0-build generated code.
+
+### admin/ (binary crate — CLI)
+**Cargo.toml deps:** `clap`, shared (path dep), `sha2`, `hex`
+
+**Commands:**
+```
+bear-trap-admin init
+    Initialize the database (create tables)
+
+bear-trap-admin create-puzzle --answer "secret passphrase" --clue-uri "ipfs://..."
+    Creates puzzle, auto-computes SHA-256 of answer, inserts into DB
+    Prints: "Created puzzle #0 (hash: 0xabc...)"
+
+bear-trap-admin add-delegation --puzzle-id 0 --delegation '{"chain":8453,...}' --prize "1.0"
+    Stores signed delegation for a puzzle
+    Deactivates any existing active delegation for that puzzle
+
+bear-trap-admin update-delegation --puzzle-id 0 --delegation '{"chain":8453,...}' --prize "2.0"
+    Replaces the active delegation (deactivates old, inserts new)
+
+bear-trap-admin list-puzzles
+    Lists all puzzles with their active delegation prize
+
+bear-trap-admin mark-solved --puzzle-id 0 --winner "0xabc..."
+    Marks puzzle as solved in DB
+```
+
+**Environment:** Uses `DATABASE_PATH` env var (same as api/).
+Usage via Railway: `railway run bear-trap-admin create-puzzle --answer "..." --clue-uri "..."`
+
+## Frontend Changes
 
 ### Remove
-- All references to submitGuess contract call
-- Import of bearTrapAbi for submitGuess (keep for ticket reading)
+- Delete `frontend/src/app/api/` directory entirely (no more API routes)
+- Remove `better-sqlite3` and `@types/better-sqlite3` from package.json
+- Remove `tsx` from package.json if it was added
+- Remove any server-side env vars from `.env.local.example` (OPERATOR_PRIVATE_KEY, PINATA_JWT, etc.)
 
-## Frontend Changes (`frontend/src/lib/contracts.ts`)
-- Add `DELEGATION_MANAGER_ADDRESS`
-- Keep `BEAR_TRAP_ADDRESS` and `BASE_CHAIN_ID`
+### Update
+- `SubmitGuess.tsx`: Change fetch URL from `/api/prove` to `${NEXT_PUBLIC_BACKEND_URL}/api/prove`
+  - The response now includes `delegation` field — use it for constructing redeemDelegations
+- `PuzzleList.tsx`: Fetch puzzles from `${NEXT_PUBLIC_BACKEND_URL}/api/puzzles` instead of reading on-chain
+  - This gives us prize info from the backend (which knows the delegation amount)
+- `PuzzleCard.tsx`: Can now display prize amount again (comes from backend API, not contract)
+- `contracts.ts`: Add `NEXT_PUBLIC_BACKEND_URL` constant
+- `.env.local.example`: Simplify to just:
+  ```
+  NEXT_PUBLIC_BEAR_TRAP_ADDRESS=0x...
+  NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
+  NEXT_PUBLIC_DELEGATION_MANAGER_ADDRESS=0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
+  NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+  ```
 
-## Frontend Changes (`frontend/src/lib/abi/`)
-- Add `delegationManager.ts` with the `redeemDelegations` ABI
-- Keep `bearTrap.ts` but update to match new contract (remove submitGuess, add useTicket events)
+### Keep
+- All contract ABIs
+- BuyTickets component (still calls contract directly from user's wallet)
+- Leaderboard (reads events from chain)
+- WalletButton
 
-## Test Changes (`contracts/test/BearTrap.t.sol`)
-- Update tests to match new contract:
-  - Remove submitGuess tests
-  - Add useTicket tests (operator only, ticket decrement, event emission)
-  - Add setOperator tests
-  - Add markSolved tests
-  - Keep buyTickets tests
-  - Test that non-operator can't call useTicket
-  - Test that useTicket fails with 0 tickets
-  - Test that useTicket fails on solved puzzle
+## Old Code Cleanup
+- Delete `apps/` directory (old Rust CLI prover — absorbed into backend/prover/)
+- Delete `frontend/scripts/manage-puzzle.ts` (replaced by backend/admin/)
+- Delete the old root `Cargo.toml` workspace that referenced `apps/` and `guests/`
+- Update root `Cargo.toml` to point to `backend/` workspace (or make backend/ self-contained)
+- Actually: keep `guests/` at root level since it's the RISC0 guest program. The backend/prover/ will reference it.
 
-## Update .env.local.example
+## Dockerfile
+
+```dockerfile
+FROM rust:1.75-slim AS builder
+WORKDIR /app
+COPY backend/ ./backend/
+COPY guests/ ./guests/
+RUN cd backend && cargo build --release --bin bear-trap-api --bin bear-trap-admin
+# Note: guests/ needs to be available for risc0-build to compile the guest ELF
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/backend/target/release/bear-trap-api /usr/local/bin/
+COPY --from=builder /app/backend/target/release/bear-trap-admin /usr/local/bin/
+RUN mkdir -p /data
+ENV DATABASE_PATH=/data/puzzles.db
+EXPOSE 3001
+CMD ["bear-trap-api"]
 ```
-# Frontend (public)
-NEXT_PUBLIC_BEAR_TRAP_ADDRESS=0x...
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
-NEXT_PUBLIC_DELEGATION_MANAGER_ADDRESS=0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
 
-# Backend (server-side only)
-PROVER_BINARY_PATH=/path/to/bear-trap-app
-OPERATOR_PRIVATE_KEY=0x...
-RPC_URL=https://mainnet.base.org
-BOUNDLESS_PRIVATE_KEY=0x...
-PINATA_JWT=...
-PUZZLE_ANSWERS={"0":"0xabcdef..."}
-```
+## README Updates
+- Completely rewrite architecture section for the new split
+- Document Railway deployment
+- Document admin CLI usage via `railway run`
+- Update env vars for both frontend (Vercel) and backend (Railway)
+- Remove any references to Next.js API routes
+- Remove old "How to Play" step about CLI prover
 
 ## Build Verification
-After ALL changes:
-1. `cd contracts && forge build` must pass
-2. `cd contracts && forge test` must pass (update tests!)
-3. `cd frontend && npm run build` must pass
-4. No TypeScript errors
+1. `cd contracts && forge build` — must pass
+2. `cd contracts && forge test` — must pass
+3. `cd backend && cargo build` — must compile api, admin, prover, shared
+4. `cd frontend && npm run build` — must pass (after removing api/ route and server deps)
 
-## File Summary
-```
-contracts/src/BearTrap.sol      — Major: remove submitGuess, add operator/useTicket/markSolved
-contracts/src/IBearTrap.sol     — Update interface
-contracts/src/ZKPEnforcer.sol   — Simplify: terms = imageId only, remove hash check
-contracts/test/BearTrap.t.sol   — Rewrite tests for new API
-apps/src/main.rs                — Add --expected-hash, remove --puzzle-id
-frontend/src/app/api/prove/route.ts    — Major: add useTicket call, puzzle answers config
-frontend/src/components/SubmitGuess.tsx — Major: new flow, redeemDelegations
-frontend/src/lib/contracts.ts          — Add DELEGATION_MANAGER_ADDRESS
-frontend/src/lib/abi/delegationManager.ts — NEW: redeemDelegations ABI
-frontend/src/lib/abi/bearTrap.ts       — Update for new contract
-frontend/.env.local.example            — Update
-```
+## Important Notes
+- You are on branch `feat/option-b-refactor`
+- The prover/ crate integration with Boundless SDK may have complex deps. If the Boundless SDK crate isn't easily installable (it may need git dep from boundless repo), create the prover crate structure with TODO comments for the Boundless integration and focus on getting the rest compiling.
+- For the axum server, the prove endpoint can initially return a mock response while we get Boundless SDK integrated later. The important thing is the architecture is correct.
+- The on-chain useTicket call in the API should use alloy/ethers to send the transaction.
+- Make sure CORS is configured properly in the axum server.
+- SQLite file should be in a `data/` directory that Railway's persistent volume maps to.
+- Commit everything to the branch when done.
