@@ -3,7 +3,6 @@ import { formatEther, type Address } from "viem";
 
 interface PuzzleCardProps {
   puzzleId: number;
-  creator: Address;
   prize: bigint;
   clueURI: string;
   solved: boolean;
@@ -19,7 +18,6 @@ function truncateAddress(address: string): string {
 
 export function PuzzleCard({
   puzzleId,
-  creator,
   prize,
   clueURI,
   solved,
@@ -94,13 +92,6 @@ export function PuzzleCard({
 
       {/* Details */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-mono text-trap-muted">Creator</span>
-          <span className="text-xs font-mono text-trap-text">
-            {truncateAddress(creator)}
-          </span>
-        </div>
-
         <div className="flex items-center justify-between">
           <span className="text-xs font-mono text-trap-muted">Clue</span>
           {clueURI ? (

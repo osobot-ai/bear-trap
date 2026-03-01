@@ -96,14 +96,19 @@ contract BearTrap is IBearTrap {
     ///        - ZKPEnforcer caveat with the proof in args
     ///        - NativeTokenTransferAmountEnforcer for the ETH prize
     ///        - LimitedCallsEnforcer to ensure only one winner
+    /// @param puzzleId ID of the puzzle being attempted
     /// @param _permissionContexts Encoded delegation data with ZKP in caveat args
     /// @param _modes ERC-7579 execution modes
     /// @param _executionCallDatas Encoded execution data (ETH transfer to solver)
     function submitGuess(
+        uint256 puzzleId,
         bytes[] calldata _permissionContexts,
         ModeCode[] calldata _modes,
         bytes[] calldata _executionCallDatas
     ) external {
+        if (puzzleId >= puzzleCount) revert InvalidPuzzleId();
+        if (puzzles[puzzleId].solved) revert AlreadySolved();
+
         // Require the player has at least one ticket
         if (tickets[msg.sender] == 0) revert NoTickets();
 
@@ -120,14 +125,13 @@ contract BearTrap is IBearTrap {
             _modes,
             _executionCallDatas
         ) {
-            // Delegation redeemed successfully — puzzle is solved!
-            // Note: In a full implementation, we'd extract the puzzle ID from
-            // the delegation data. For now, we emit the event.
-            emit PuzzleSolved(0, msg.sender);
+            puzzles[puzzleId].solved = true;
+            puzzles[puzzleId].winner = msg.sender;
+            emit PuzzleSolved(puzzleId, msg.sender);
         } catch {
             // Delegation failed — wrong guess or invalid proof
             // The ticket is already consumed above
-            emit WrongGuess(0, msg.sender);
+            emit WrongGuess(puzzleId, msg.sender);
         }
     }
 

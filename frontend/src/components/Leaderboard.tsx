@@ -1,21 +1,16 @@
 "use client";
 
-import { useAccount } from "wagmi";
-
-/**
- * Leaderboard displays recent guess events from the BearTrap contract.
- *
- * In production, this would use useContractEvents or an indexer (e.g., The Graph)
- * to fetch GuessSubmitted and PuzzleSolved events. For now, it shows the
- * structure with an empty state since there are no events to read until the
- * contract is deployed and active.
- */
+import { useState, useEffect } from "react";
+import { useAccount, usePublicClient } from "wagmi";
+import { bearTrapAbi } from "@/lib/abi/bearTrap";
+import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
 
 interface LeaderboardEntry {
   address: string;
   puzzleId: number;
   correct: boolean;
-  timestamp: string;
+  blockNumber: bigint;
+  transactionHash: string;
 }
 
 function truncateAddress(address: string): string {
@@ -24,14 +19,105 @@ function truncateAddress(address: string): string {
 
 export function Leaderboard() {
   const { address } = useAccount();
+  const publicClient = usePublicClient({ chainId: BASE_CHAIN_ID });
+  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // In production, this would be populated from on-chain events:
-  // const { data: events } = useContractEvents({
-  //   address: BEAR_TRAP_ADDRESS,
-  //   abi: bearTrapAbi,
-  //   eventName: 'GuessSubmitted',
-  // });
-  const entries: LeaderboardEntry[] = [];
+  // Fetch historical PuzzleSolved and WrongGuess events
+  useEffect(() => {
+    if (!publicClient) {
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchEvents() {
+      try {
+        // Fetch both event types in parallel
+        const [solvedLogs, wrongLogs] = await Promise.all([
+          publicClient!.getLogs({
+            address: BEAR_TRAP_ADDRESS,
+            event: {
+              type: "event",
+              name: "PuzzleSolved",
+              inputs: [
+                {
+                  name: "puzzleId",
+                  type: "uint256",
+                  indexed: true,
+                },
+                {
+                  name: "solver",
+                  type: "address",
+                  indexed: true,
+                },
+              ],
+            },
+            fromBlock: "earliest",
+            toBlock: "latest",
+          }),
+          publicClient!.getLogs({
+            address: BEAR_TRAP_ADDRESS,
+            event: {
+              type: "event",
+              name: "WrongGuess",
+              inputs: [
+                {
+                  name: "puzzleId",
+                  type: "uint256",
+                  indexed: true,
+                },
+                {
+                  name: "guesser",
+                  type: "address",
+                  indexed: true,
+                },
+              ],
+            },
+            fromBlock: "earliest",
+            toBlock: "latest",
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        const solvedEntries: LeaderboardEntry[] = solvedLogs.map((log) => ({
+          address: (log.args.solver as string) ?? "0x",
+          puzzleId: Number(log.args.puzzleId ?? 0),
+          correct: true,
+          blockNumber: log.blockNumber,
+          transactionHash: log.transactionHash,
+        }));
+
+        const wrongEntries: LeaderboardEntry[] = wrongLogs.map((log) => ({
+          address: (log.args.guesser as string) ?? "0x",
+          puzzleId: Number(log.args.puzzleId ?? 0),
+          correct: false,
+          blockNumber: log.blockNumber,
+          transactionHash: log.transactionHash,
+        }));
+
+        // Combine and sort by block number descending (newest first)
+        const all = [...solvedEntries, ...wrongEntries].sort(
+          (a, b) => Number(b.blockNumber - a.blockNumber)
+        );
+
+        setEntries(all);
+      } catch {
+        // Contract might not be deployed yet — silently handle
+        setEntries([]);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    fetchEvents();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicClient]);
 
   return (
     <section>
@@ -63,12 +149,31 @@ export function Leaderboard() {
             Result
           </span>
           <span className="text-[10px] font-mono text-trap-muted uppercase tracking-wider text-right">
-            Time
+            Tx
           </span>
         </div>
 
         {/* Table body */}
-        {entries.length === 0 ? (
+        {isLoading ? (
+          <div className="px-6 py-12 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-trap-border/10 border border-trap-border/20 animate-pulse">
+              <svg
+                className="h-5 w-5 text-trap-muted/40"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+            </div>
+            <p className="text-sm text-trap-muted font-mono">
+              Loading events...
+            </p>
+          </div>
+        ) : entries.length === 0 ? (
           <div className="px-6 py-12 text-center">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-trap-border/10 border border-trap-border/20">
               <svg
@@ -99,7 +204,7 @@ export function Leaderboard() {
 
               return (
                 <div
-                  key={index}
+                  key={`${entry.transactionHash}-${index}`}
                   className={`
                     grid grid-cols-4 gap-4 px-6 py-4 transition-colors
                     ${isCurrentUser ? "bg-trap-green/[0.03]" : "hover:bg-trap-dark/50"}
@@ -126,9 +231,16 @@ export function Leaderboard() {
                     {entry.correct ? "Solved" : "Wrong"}
                   </span>
 
-                  <span className="font-mono text-xs text-trap-muted text-right">
-                    {entry.timestamp}
-                  </span>
+                  <div className="text-right">
+                    <a
+                      href={`https://basescan.org/tx/${entry.transactionHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-xs text-trap-muted hover:text-trap-green transition-colors"
+                    >
+                      {entry.transactionHash.slice(0, 8)}...
+                    </a>
+                  </div>
                 </div>
               );
             })}

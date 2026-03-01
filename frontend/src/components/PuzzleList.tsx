@@ -6,15 +6,6 @@ import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
 import { PuzzleCard } from "./PuzzleCard";
 import { type Address } from "viem";
 
-interface PuzzleData {
-  creator: Address;
-  prize: bigint;
-  clueURI: string;
-  solutionHash: `0x${string}`;
-  solved: boolean;
-  winner: Address;
-}
-
 export function PuzzleList() {
   const {
     data: puzzleCount,
@@ -29,11 +20,12 @@ export function PuzzleList() {
 
   const count = puzzleCount ? Number(puzzleCount) : 0;
 
+  // puzzles are 0-indexed: 0, 1, 2, ...
   const puzzleContracts = Array.from({ length: count }, (_, i) => ({
     address: BEAR_TRAP_ADDRESS,
     abi: bearTrapAbi,
     functionName: "puzzles" as const,
-    args: [BigInt(i + 1)] as const,
+    args: [BigInt(i)] as const,
     chainId: BASE_CHAIN_ID,
   }));
 
@@ -139,24 +131,23 @@ export function PuzzleList() {
           {puzzlesData?.map((result, index) => {
             if (result.status !== "success" || !result.result) return null;
 
+            // puzzles() returns: (bytes32 solutionHash, uint256 prizeAmount, address winner, bool solved, string clueURI)
             const puzzle = result.result as unknown as [
-              Address,
-              bigint,
-              string,
-              `0x${string}`,
-              boolean,
-              Address
+              `0x${string}`, // solutionHash
+              bigint,        // prizeAmount
+              Address,       // winner
+              boolean,       // solved
+              string         // clueURI
             ];
 
             return (
               <PuzzleCard
-                key={index + 1}
-                puzzleId={index + 1}
-                creator={puzzle[0]}
+                key={index}
+                puzzleId={index}
                 prize={puzzle[1]}
-                clueURI={puzzle[2]}
-                solved={puzzle[4]}
-                winner={puzzle[5]}
+                clueURI={puzzle[4]}
+                solved={puzzle[3]}
+                winner={puzzle[2]}
               />
             );
           })}

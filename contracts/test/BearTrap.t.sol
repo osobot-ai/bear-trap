@@ -189,9 +189,12 @@ contract BearTrapTest is Test {
     // ==================== Guess Submission Tests ====================
 
     function test_SubmitGuessNoTickets() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+
         vm.prank(player);
         vm.expectRevert(IBearTrap.NoTickets.selector);
         bearTrap.submitGuess(
+            0,
             new bytes[](0),
             new ModeCode[](0),
             new bytes[](0)
@@ -199,6 +202,8 @@ contract BearTrapTest is Test {
     }
 
     function test_SubmitGuessCorrect() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+
         // Give player a ticket
         _givePlayerTickets(1);
 
@@ -210,6 +215,7 @@ contract BearTrapTest is Test {
         vm.expectEmit(true, true, false, false);
         emit IBearTrap.PuzzleSolved(0, player);
         bearTrap.submitGuess(
+            0,
             new bytes[](0),
             new ModeCode[](0),
             new bytes[](0)
@@ -220,6 +226,8 @@ contract BearTrapTest is Test {
     }
 
     function test_SubmitGuessWrong() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+
         // Give player a ticket
         _givePlayerTickets(1);
 
@@ -231,6 +239,7 @@ contract BearTrapTest is Test {
         vm.expectEmit(true, true, false, false);
         emit IBearTrap.WrongGuess(0, player);
         bearTrap.submitGuess(
+            0,
             new bytes[](0),
             new ModeCode[](0),
             new bytes[](0)
@@ -241,6 +250,8 @@ contract BearTrapTest is Test {
     }
 
     function test_TicketBurnedOnWrongGuess() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+
         // Give player 3 tickets
         _givePlayerTickets(3);
 
@@ -250,6 +261,7 @@ contract BearTrapTest is Test {
         // Submit wrong guess
         vm.prank(player);
         bearTrap.submitGuess(
+            0,
             new bytes[](0),
             new ModeCode[](0),
             new bytes[](0)
@@ -260,23 +272,59 @@ contract BearTrapTest is Test {
     }
 
     function test_MultipleGuessAttempts() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+
         // Give player 3 tickets
         _givePlayerTickets(3);
 
         // Two wrong guesses
         delegationManager.setShouldSucceed(false);
         vm.startPrank(player);
-        bearTrap.submitGuess(new bytes[](0), new ModeCode[](0), new bytes[](0));
-        bearTrap.submitGuess(new bytes[](0), new ModeCode[](0), new bytes[](0));
+        bearTrap.submitGuess(0, new bytes[](0), new ModeCode[](0), new bytes[](0));
+        bearTrap.submitGuess(0, new bytes[](0), new ModeCode[](0), new bytes[](0));
 
         assertEq(bearTrap.tickets(player), 1);
 
         // Third guess is correct
         delegationManager.setShouldSucceed(true);
-        bearTrap.submitGuess(new bytes[](0), new ModeCode[](0), new bytes[](0));
+        bearTrap.submitGuess(0, new bytes[](0), new ModeCode[](0), new bytes[](0));
         vm.stopPrank();
 
         assertEq(bearTrap.tickets(player), 0);
+    }
+
+    function test_SubmitGuessInvalidPuzzleId() public {
+        _givePlayerTickets(1);
+
+        vm.prank(player);
+        vm.expectRevert(IBearTrap.InvalidPuzzleId.selector);
+        bearTrap.submitGuess(999, new bytes[](0), new ModeCode[](0), new bytes[](0));
+    }
+
+    function test_SubmitGuessAlreadySolved() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+        _givePlayerTickets(2);
+        delegationManager.setShouldSucceed(true);
+
+        vm.prank(player);
+        bearTrap.submitGuess(0, new bytes[](0), new ModeCode[](0), new bytes[](0));
+
+        vm.prank(player);
+        vm.expectRevert(IBearTrap.AlreadySolved.selector);
+        bearTrap.submitGuess(0, new bytes[](0), new ModeCode[](0), new bytes[](0));
+    }
+
+    function test_SubmitGuessPuzzleStateUpdated() public {
+        bearTrap.createPuzzle(sha256("test"), 1 ether, "test");
+        _givePlayerTickets(1);
+        delegationManager.setShouldSucceed(true);
+
+        vm.prank(player);
+        bearTrap.submitGuess(0, new bytes[](0), new ModeCode[](0), new bytes[](0));
+
+        (, , address winner, bool solved, ) = bearTrap.puzzles(0);
+        assertTrue(solved);
+        assertEq(winner, player);
     }
 
     // ==================== Puzzle Management Tests ====================

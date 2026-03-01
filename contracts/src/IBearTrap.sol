@@ -47,10 +47,12 @@ interface IBearTrap {
     function buyTickets(uint256 amount) external;
 
     /// @notice Submit a guess attempt by redeeming a delegation with ZKP
+    /// @param puzzleId ID of the puzzle being attempted
     /// @param _permissionContexts Encoded delegation data with ZKP in caveat args
     /// @param _modes ERC-7579 execution modes
     /// @param _executionCallDatas Encoded execution data (ETH transfer to solver)
     function submitGuess(
+        uint256 puzzleId,
         bytes[] calldata _permissionContexts,
         ModeCode[] calldata _modes,
         bytes[] calldata _executionCallDatas

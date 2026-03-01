@@ -16,6 +16,7 @@ guests = { workspace = true }
 hex = { workspace = true }
 risc0-zkvm = { workspace = true, default-features = true }
 sha2 = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

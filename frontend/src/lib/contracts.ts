@@ -9,6 +9,10 @@ export const BEAR_TRAP_ADDRESS: Address =
 export const OSO_TOKEN_ADDRESS: Address =
   "0xc78fabc2cb5b9cf59e0af3da8e3bc46d47753a4e";
 
+/** MetaMask Delegation Manager on Base */
+export const DELEGATION_MANAGER_ADDRESS: Address =
+  "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3";
+
 /**
  * Cost per ticket in $OSO (raw token units).
  * The BearTrap contract defines this as TICKET_PRICE.

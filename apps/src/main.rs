@@ -42,8 +42,9 @@ sol! {
     #[sol(rpc)]
     interface IBearTrap {
         function submitGuess(
+            uint256 puzzleId,
             bytes[] calldata _permissionContexts,
-            bytes1[] calldata _modes,
+            bytes32[] calldata _modes,
             bytes[] calldata _executionCallDatas
         ) external;
 
@@ -63,6 +64,14 @@ struct Args {
     /// The solver's Ethereum address
     #[arg(long)]
     solver_address: Address,
+
+    /// The puzzle ID to solve
+    #[arg(long)]
+    puzzle_id: u64,
+
+    /// Output seal + journal hex only (don't submit on-chain)
+    #[arg(long, default_value = "false")]
+    output_only: bool,
 
     /// RPC URL for the target chain
     #[arg(long, env = "RPC_URL")]
@@ -151,6 +160,24 @@ async fn main() -> Result<()> {
         .context("Proof request was not fulfilled")?;
     info!("Proof fulfilled!");
 
+    let journal = PuzzleOutput {
+        solverAddress: args.solver_address,
+        solutionHash: expected_hash,
+    }
+    .abi_encode();
+
+    if args.output_only {
+        let output = serde_json::json!({
+            "seal": format!("0x{}", hex::encode(&fulfillment.seal)),
+            "journal": format!("0x{}", hex::encode(&journal)),
+            "puzzleId": args.puzzle_id,
+            "solverAddress": format!("{}", args.solver_address),
+            "expectedHash": format!("{}", expected_hash),
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
     // Step 7: Submit the proof to the BearTrap contract
     info!("Submitting proof to BearTrap contract at {}...", args.bear_trap_address);
 
@@ -158,20 +185,27 @@ async fn main() -> Result<()> {
         .wallet(args.private_key.clone().into())
         .on_http(args.rpc_url);
 
-    let bear_trap = IBearTrap::new(args.bear_trap_address, &provider);
+    let _bear_trap = IBearTrap::new(args.bear_trap_address, &provider);
 
-    // The seal from the fulfillment is used as the proof in the delegation args
+    let caveat_args = (fulfillment.seal.clone(), journal.clone()).abi_encode_params();
+
+    info!("Constructing delegation calldata...");
+    info!("Seal length: {} bytes", fulfillment.seal.len());
+    info!("Journal length: {} bytes", journal.len());
+    info!("Caveat args length: {} bytes", caveat_args.len());
+
+    info!("=== Proof Generation Complete ===");
+    info!("Puzzle ID: {}", args.puzzle_id);
+    info!("Solver: {}", args.solver_address);
+    info!("Seal hex: 0x{}", hex::encode(&fulfillment.seal));
+    info!("Journal hex: 0x{}", hex::encode(&journal));
+    info!("Caveat args hex: 0x{}", hex::encode(&caveat_args));
+    info!("");
+    info!("To submit on-chain:");
+    info!("1. Use the frontend paste-seal mode with the seal and journal hex above");
     info!(
-        "Seal length: {} bytes",
-        fulfillment.seal.len()
+        "2. Or construct the full delegation redemption calldata with the pre-signed delegation"
     );
-
-    // Note: In production, the permissionContexts, modes, and executionCallDatas
-    // would be constructed to include the ZKP seal in the delegation's caveat args.
-    // This requires the delegation to be pre-created by the treasury with the
-    // ZKPEnforcer caveat. The seal goes into the Caveat.args field.
-    info!("Proof generation complete. Seal ready for delegation redemption.");
-    info!("To redeem, construct the delegation with the seal in the ZKPEnforcer caveat args.");
 
     Ok(())
 }
