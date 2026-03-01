@@ -9,14 +9,16 @@ import {
 } from "wagmi";
 import { encodeAbiParameters, type Hex } from "viem";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
-import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
+import { delegationManagerAbi } from "@/lib/abi/delegationManager";
+import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
 
 type SubmitStep =
   | "idle"
   | "proving"
-  | "submitting"
+  | "proof-ready"
   | "confirming"
   | "success"
+  | "wrong"
   | "error";
 
 interface ProveResult {
@@ -32,6 +34,7 @@ export function SubmitGuess() {
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [proofData, setProofData] = useState<ProveResult | null>(null);
 
   // Read puzzle count for the selector
   const { data: puzzleCount } = useReadContract({
@@ -51,30 +54,30 @@ export function SubmitGuess() {
     query: { enabled: !!address },
   });
 
-  // Write: submitGuess
+  // Write: redeemDelegations on DelegationManager
   const {
-    data: submitHash,
-    writeContract: submitGuess,
-    isPending: isSubmitting,
-    error: submitError,
+    data: redeemHash,
+    writeContract: redeemDelegations,
+    isPending: isRedeeming,
+    error: redeemError,
   } = useWriteContract();
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
-    useWaitForTransactionReceipt({ hash: submitHash });
+    useWaitForTransactionReceipt({ hash: redeemHash });
 
   const count = puzzleCount ? Number(puzzleCount) : 0;
   const tickets = ticketBalance ? Number(ticketBalance) : 0;
   const hasTickets = tickets > 0;
 
-  // Main flow: generate proof via API then submit on-chain
+  // Step 1: Generate proof via API (which also burns the ticket)
   const handleSolvePuzzle = useCallback(async () => {
     if (!passphrase.trim() || !address) return;
 
     setStep("proving");
     setErrorMessage("");
+    setProofData(null);
 
     try {
-      // Step 1: Call the /api/prove endpoint to generate a ZK proof
       const response = await fetch("/api/prove", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -88,68 +91,74 @@ export function SubmitGuess() {
       const data = await response.json();
 
       if (!response.ok) {
+        // Check if this was a wrong guess (ticket already consumed)
+        if (data.error?.includes("Wrong guess")) {
+          setErrorMessage(data.error);
+          setStep("wrong");
+          return;
+        }
         throw new Error(data.error || "Proof generation failed");
       }
 
-      const proofResult = data as ProveResult;
-
-      // Step 2: Auto-construct the delegation redemption transaction
-      setStep("submitting");
-
-      const seal = proofResult.seal as Hex;
-      const journal = proofResult.journal as Hex;
-
-      // Construct ZKPEnforcer caveat args: abi.encode(bytes seal, bytes journal)
-      const caveatArgs = encodeAbiParameters(
-        [{ type: "bytes" }, { type: "bytes" }],
-        [seal, journal]
-      );
-
-      // Build permissionContexts with the caveat args
-      const permissionContexts: Hex[] = [caveatArgs];
-
-      // ModeCode for single default execution (bytes32 of zeros)
-      const defaultMode =
-        "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
-
-      // Execution calldata: ETH transfer to solver
-      const executionCallData = encodeAbiParameters(
-        [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
-        [address, BigInt(0), "0x" as Hex]
-      );
-
-      submitGuess({
-        address: BEAR_TRAP_ADDRESS,
-        abi: bearTrapAbi,
-        functionName: "submitGuess",
-        args: [
-          BigInt(puzzleId),
-          permissionContexts,
-          [defaultMode],
-          [executionCallData],
-        ],
-        chainId: BASE_CHAIN_ID,
-      });
-
-      setStep("confirming");
+      const result = data as ProveResult;
+      setProofData(result);
+      setStep("proof-ready");
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to generate proof"
       );
       setStep("error");
     }
-  }, [passphrase, address, puzzleId, submitGuess]);
+  }, [passphrase, address, puzzleId]);
+
+  // Step 2: Submit redeemDelegations with the proof
+  const handleRedeemPrize = useCallback(() => {
+    if (!proofData || !address) return;
+
+    const seal = proofData.seal as Hex;
+    const journal = proofData.journal as Hex;
+
+    // Construct ZKPEnforcer caveat args: abi.encode(bytes seal, bytes journal)
+    const caveatArgs = encodeAbiParameters(
+      [{ type: "bytes" }, { type: "bytes" }],
+      [seal, journal]
+    );
+
+    // Build permissionContexts with the caveat args
+    const permissionContexts: Hex[] = [caveatArgs];
+
+    // ModeCode for single default execution (bytes32 of zeros)
+    const defaultMode =
+      "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
+
+    // Execution calldata: ETH transfer to solver
+    const executionCallData = encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
+      [address, BigInt(0), "0x" as Hex]
+    );
+
+    redeemDelegations({
+      address: DELEGATION_MANAGER_ADDRESS,
+      abi: delegationManagerAbi,
+      functionName: "redeemDelegations",
+      args: [permissionContexts, [defaultMode], [executionCallData]],
+      chainId: BASE_CHAIN_ID,
+    });
+
+    setStep("confirming");
+  }, [proofData, address, redeemDelegations]);
 
   // Reset flow
   const handleReset = useCallback(() => {
     setStep("idle");
     setPassphrase("");
     setErrorMessage("");
+    setProofData(null);
   }, []);
 
   // Determine display state
   const displayError =
-    errorMessage || (submitError ? submitError.message : "");
+    errorMessage || (redeemError ? redeemError.message : "");
 
   return (
     <section className="glass-panel noise-overlay rounded-xl overflow-hidden">
@@ -238,9 +247,8 @@ export function SubmitGuess() {
                 </svg>
                 <div className="text-xs text-trap-muted leading-relaxed">
                   <p>
-                    Enter the secret passphrase. A zero-knowledge proof will be
-                    generated to verify your answer without revealing it
-                    on-chain.
+                    Enter the secret passphrase. A ZK proof will verify your
+                    answer. Each attempt costs one ticket.
                   </p>
                 </div>
               </div>
@@ -271,7 +279,7 @@ export function SubmitGuess() {
           </>
         )}
 
-        {/* Step 2: Generating proof */}
+        {/* Step 2: Burning ticket & generating proof */}
         {step === "proving" && (
           <div className="py-8 text-center space-y-4">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
@@ -287,18 +295,51 @@ export function SubmitGuess() {
             </div>
             <div>
               <p className="font-mono text-sm text-trap-text">
-                Generating ZK proof...
+                Burning ticket &amp; generating proof...
               </p>
               <p className="text-xs text-trap-muted mt-1">
-                This may take 1-3 minutes. The Boundless network is generating
-                a zero-knowledge proof of your answer.
+                Your ticket has been consumed. Generating zero-knowledge proof...
+                This may take 1-3 minutes.
               </p>
             </div>
           </div>
         )}
 
-        {/* Step 3: Submitting / Confirming */}
-        {(step === "submitting" || step === "confirming") && (
+        {/* Step 3: Proof generated — submit to claim prize */}
+        {step === "proof-ready" && (
+          <div className="py-8 text-center space-y-4">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20">
+              <svg
+                className="h-6 w-6 text-trap-green"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-display text-lg text-trap-green">
+                Proof Generated!
+              </p>
+              <p className="text-xs text-trap-muted mt-1">
+                Submit the transaction to claim your prize.
+              </p>
+            </div>
+            <button
+              onClick={handleRedeemPrize}
+              className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all"
+            >
+              Claim Prize
+            </button>
+          </div>
+        )}
+
+        {/* Step 4: Confirming transaction */}
+        {step === "confirming" && (
           <div className="py-8 text-center space-y-4">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
               <svg
@@ -313,22 +354,22 @@ export function SubmitGuess() {
             </div>
             <div>
               <p className="font-mono text-sm text-trap-text">
-                {isSubmitting
+                {isRedeeming
                   ? "Waiting for wallet confirmation..."
                   : isConfirming
                   ? "Confirming transaction..."
                   : "Submitting proof on-chain..."}
               </p>
               <p className="text-xs text-trap-muted mt-1">
-                {isConfirming && submitHash
-                  ? `Tx: ${submitHash.slice(0, 10)}...${submitHash.slice(-8)}`
+                {isConfirming && redeemHash
+                  ? `Tx: ${redeemHash.slice(0, 10)}...${redeemHash.slice(-8)}`
                   : "Please confirm in your wallet"}
               </p>
             </div>
           </div>
         )}
 
-        {/* Step 4: Success */}
+        {/* Step 5: Success */}
         {(isConfirmed || step === "success") && (
           <div className="py-8 text-center space-y-4">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20">
@@ -346,16 +387,16 @@ export function SubmitGuess() {
             </div>
             <div>
               <p className="font-display text-lg text-trap-green">
-                Guess Submitted!
+                Puzzle Solved! Prize Claimed!
               </p>
               <p className="text-xs text-trap-muted mt-1">
-                Check the leaderboard below for the result. If your proof was
-                valid, the puzzle is solved and the prize is yours!
+                Congratulations! The delegation has been redeemed and the ETH
+                prize is yours.
               </p>
             </div>
-            {submitHash && (
+            {redeemHash && (
               <a
-                href={`https://basescan.org/tx/${submitHash}`}
+                href={`https://basescan.org/tx/${redeemHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block text-xs font-mono text-trap-green hover:text-trap-green-dim transition-colors underline decoration-trap-green/30 underline-offset-2"
@@ -367,14 +408,51 @@ export function SubmitGuess() {
               onClick={handleReset}
               className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
             >
-              Submit Another Guess
+              Solve Another Puzzle
             </button>
           </div>
         )}
 
-        {/* Error state */}
+        {/* Step 6: Wrong guess */}
+        {step === "wrong" && (
+          <div className="space-y-4">
+            <div className="py-8 text-center space-y-4">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-red/10 border border-trap-red/20">
+                <svg
+                  className="h-6 w-6 text-trap-red"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-display text-lg text-trap-red">
+                  Wrong Guess
+                </p>
+                <p className="text-xs text-trap-muted mt-1">
+                  {errorMessage || "Your ticket was consumed. Try again with a different passphrase."}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleReset}
+              className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+
+        {/* Step 7: Generic error */}
         {(step === "error" || displayError) &&
           step !== "success" &&
+          step !== "wrong" &&
           !isConfirmed && (
             <div className="space-y-4">
               <div className="rounded-lg border border-trap-red/20 bg-trap-red/5 p-4">

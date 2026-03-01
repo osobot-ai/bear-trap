@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import {IDelegationManager} from "delegation-framework/interfaces/IDelegationManager.sol";
-import {ModeCode} from "delegation-framework/utils/Types.sol";
 import {IBearTrap} from "./IBearTrap.sol";
 
 /// @title IERC20 — Minimal ERC20 interface for $OSO token interaction
@@ -15,36 +13,33 @@ interface IERC20 {
 /// @title BearTrap
 /// @author Bear Trap
 /// @notice An ERC-7710 delegation puzzle game on Base. Players burn $OSO tokens to buy
-///         guess tickets, then submit ZK proofs attempting to solve puzzles. The try/catch
-///         pattern ensures ticket burns persist even on wrong guesses.
+///         guess tickets. The backend operator burns tickets on guess attempts and generates
+///         ZK proofs. Users claim prizes by calling redeemDelegations on the DelegationManager
+///         directly with the proof.
 ///
-/// @dev Key design: tickets are decremented BEFORE the try block, so they persist even when
-///      the ZKPEnforcer reverts on wrong answers. This creates an economic deterrent for
-///      brute-force attempts.
+/// @dev Key design: solutionHash is NEVER stored on-chain (prevents free offline checking).
+///      Tickets are tracked on-chain for transparency. The backend operator is the only
+///      entity that can burn tickets via useTicket().
 ///
 ///      Flow:
 ///      1. Player calls buyTickets() — $OSO transferred to burn address
-///      2. Player generates ZK proof via Boundless (off-chain)
-///      3. Player calls submitGuess() with delegation data including the proof
-///      4. Contract decrements ticket count
-///      5. try { delegationManager.redeemDelegations(...) }
-///         - ZKPEnforcer validates proof in beforeHook
-///         - If valid: NativeTokenTransferAmountEnforcer allows ETH transfer
-///         - If invalid: ZKPEnforcer reverts → caught by catch
-///      6. Success: PuzzleSolved event, winner recorded
-///         Failure: WrongGuess event, ticket already consumed
+///      2. Player submits passphrase to backend API
+///      3. Backend calls useTicket() to consume a ticket
+///      4. Backend generates ZK proof via Boundless (expectedHash from server config)
+///      5. If proof succeeds, frontend calls redeemDelegations() on DelegationManager
+///      6. Backend calls markSolved() after confirming the redemption tx
 contract BearTrap is IBearTrap {
     /// @notice The $OSO ERC20 token contract
     IERC20 public immutable osoToken;
 
-    /// @notice The MetaMask Delegation Manager contract
-    IDelegationManager public immutable delegationManager;
-
     /// @notice Price per ticket in $OSO tokens (in wei)
     uint256 public immutable ticketPrice;
 
-    /// @notice Contract owner (can create puzzles)
+    /// @notice Contract owner (can create puzzles, set operator)
     address public owner;
+
+    /// @notice Backend operator wallet (can call useTicket, markSolved)
+    address public operator;
 
     /// @notice Burn address for $OSO tokens
     address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -58,17 +53,13 @@ contract BearTrap is IBearTrap {
     /// @notice Total number of puzzles created
     uint256 public puzzleCount;
 
-    /// @dev Error thrown when caller is not the owner
     /// @param _osoToken Address of the $OSO ERC20 token
-    /// @param _delegationManager Address of the MetaMask DelegationManager
     /// @param _ticketPrice Price per ticket in $OSO tokens (wei)
     constructor(
         IERC20 _osoToken,
-        IDelegationManager _delegationManager,
         uint256 _ticketPrice
     ) {
         osoToken = _osoToken;
-        delegationManager = _delegationManager;
         ticketPrice = _ticketPrice;
         owner = msg.sender;
     }
@@ -90,57 +81,46 @@ contract BearTrap is IBearTrap {
         emit TicketsPurchased(msg.sender, amount);
     }
 
-    /// @notice Submit a guess attempt by redeeming a delegation with ZKP.
-    /// @dev Critical: ticket is decremented BEFORE the try block so it persists on revert.
-    ///      The delegation should include:
-    ///        - ZKPEnforcer caveat with the proof in args
-    ///        - NativeTokenTransferAmountEnforcer for the ETH prize
-    ///        - LimitedCallsEnforcer to ensure only one winner
-    /// @param puzzleId ID of the puzzle being attempted
-    /// @param _permissionContexts Encoded delegation data with ZKP in caveat args
-    /// @param _modes ERC-7579 execution modes
-    /// @param _executionCallDatas Encoded execution data (ETH transfer to solver)
-    function submitGuess(
-        uint256 puzzleId,
-        bytes[] calldata _permissionContexts,
-        ModeCode[] calldata _modes,
-        bytes[] calldata _executionCallDatas
-    ) external {
+    /// @notice Consume a ticket for a guess attempt. Only callable by operator.
+    /// @param user The player whose ticket to consume
+    /// @param puzzleId The puzzle being attempted
+    function useTicket(address user, uint256 puzzleId) external {
+        if (msg.sender != operator) revert NotOperator();
+        if (puzzleId >= puzzleCount) revert InvalidPuzzleId();
+        if (puzzles[puzzleId].solved) revert AlreadySolved();
+        if (tickets[user] == 0) revert NoTickets();
+
+        tickets[user]--;
+
+        emit TicketUsed(puzzleId, user, tickets[user]);
+    }
+
+    /// @notice Mark a puzzle as solved with the winner's address. Only callable by operator.
+    /// @dev Called by the backend after confirming the redeemDelegations tx succeeded.
+    /// @param puzzleId The puzzle that was solved
+    /// @param winner The address that solved it
+    function markSolved(uint256 puzzleId, address winner) external {
+        if (msg.sender != operator) revert NotOperator();
         if (puzzleId >= puzzleCount) revert InvalidPuzzleId();
         if (puzzles[puzzleId].solved) revert AlreadySolved();
 
-        // Require the player has at least one ticket
-        if (tickets[msg.sender] == 0) revert NoTickets();
+        puzzles[puzzleId].solved = true;
+        puzzles[puzzleId].winner = winner;
 
-        // CRITICAL: Decrement ticket BEFORE try/catch
-        // This ensures the ticket burn persists even if the delegation reverts
-        tickets[msg.sender]--;
+        emit PuzzleSolved(puzzleId, winner);
+    }
 
-        // Attempt to redeem the delegation
-        // If the ZKPEnforcer validates the proof, the delegation executes
-        // (transferring ETH prize to the solver). If the proof is invalid,
-        // the enforcer reverts and the catch block handles it.
-        try delegationManager.redeemDelegations(
-            _permissionContexts,
-            _modes,
-            _executionCallDatas
-        ) {
-            puzzles[puzzleId].solved = true;
-            puzzles[puzzleId].winner = msg.sender;
-            emit PuzzleSolved(puzzleId, msg.sender);
-        } catch {
-            // Delegation failed — wrong guess or invalid proof
-            // The ticket is already consumed above
-            emit WrongGuess(puzzleId, msg.sender);
-        }
+    /// @notice Set the operator address. Only callable by owner.
+    /// @param _operator The new operator address
+    function setOperator(address _operator) external {
+        if (msg.sender != owner) revert NotOwner();
+        operator = _operator;
     }
 
     /// @notice Create a new puzzle. Only callable by the contract owner.
-    /// @param solutionHash SHA-256 hash of the puzzle solution
     /// @param prizeAmount ETH prize amount in wei
     /// @param clueURI URI pointing to puzzle clues (e.g., IPFS link)
     function createPuzzle(
-        bytes32 solutionHash,
         uint256 prizeAmount,
         string calldata clueURI
     ) external {
@@ -149,14 +129,13 @@ contract BearTrap is IBearTrap {
         uint256 puzzleId = puzzleCount++;
 
         puzzles[puzzleId] = Puzzle({
-            solutionHash: solutionHash,
             prizeAmount: prizeAmount,
-            winner: address(0),
+            clueURI: clueURI,
             solved: false,
-            clueURI: clueURI
+            winner: address(0)
         });
 
-        emit PuzzleCreated(puzzleId, solutionHash, prizeAmount);
+        emit PuzzleCreated(puzzleId, prizeAmount);
     }
 
     /// @notice Transfer ownership to a new address

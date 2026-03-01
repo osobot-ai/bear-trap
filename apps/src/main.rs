@@ -1,11 +1,14 @@
 // Bear Trap — Pure Proof Service CLI
 //
 // This application:
-// 1. Takes a puzzle guess, solver address, and puzzle ID as input
+// 1. Takes a puzzle guess, solver address, and expected hash as input
 // 2. ABI-encodes the input for the RISC0 guest program
 // 3. Submits a proof request to the Boundless market
 // 4. Waits for the proof to be fulfilled
 // 5. Outputs JSON to stdout: { seal, journal, solverAddress, solutionHash }
+//
+// The expected hash comes from the backend (not from chain), preventing
+// free offline checking of answers.
 
 use std::time::Duration;
 
@@ -48,9 +51,9 @@ struct Args {
     #[arg(long)]
     solver_address: Address,
 
-    /// The puzzle ID to solve
+    /// The expected answer hash (provided by backend, NOT from chain)
     #[arg(long)]
-    puzzle_id: u64,
+    expected_hash: FixedBytes<32>,
 
     /// RPC URL for the target chain
     #[arg(long, env = "RPC_URL")]
@@ -81,20 +84,21 @@ async fn main() -> Result<()> {
     eprintln!("Bear Trap — Proof Service");
     eprintln!("Guess: {}", args.guess);
     eprintln!("Solver: {}", args.solver_address);
-    eprintln!("Puzzle ID: {}", args.puzzle_id);
+    eprintln!("Expected hash: {}", args.expected_hash);
 
-    // Step 1: Compute the expected hash of the guess
+    // Step 1: Compute the hash of the guess for verification
     let mut hasher = Sha256::new();
     hasher.update(args.guess.as_bytes());
-    let expected_hash: [u8; 32] = hasher.finalize().into();
-    let expected_hash = FixedBytes::from(expected_hash);
-    eprintln!("Expected hash: {}", expected_hash);
+    let guess_hash: [u8; 32] = hasher.finalize().into();
+    let guess_hash = FixedBytes::from(guess_hash);
+    eprintln!("Guess hash: {}", guess_hash);
 
     // Step 2: ABI-encode the input for the guest program
+    // The guest will assert that hash(guess) == expectedHash
     let input = PuzzleInput {
         guess: args.guess.clone(),
         solverAddress: args.solver_address,
-        expectedHash: expected_hash,
+        expectedHash: args.expected_hash,
     };
     let input_bytes = input.abi_encode();
 
@@ -139,7 +143,7 @@ async fn main() -> Result<()> {
 
     let journal = PuzzleOutput {
         solverAddress: args.solver_address,
-        solutionHash: expected_hash,
+        solutionHash: args.expected_hash,
     }
     .abi_encode();
 
@@ -148,7 +152,7 @@ async fn main() -> Result<()> {
         "seal": format!("0x{}", hex::encode(&fulfillment.seal)),
         "journal": format!("0x{}", hex::encode(&journal)),
         "solverAddress": format!("{}", args.solver_address),
-        "solutionHash": format!("{}", expected_hash),
+        "solutionHash": format!("{}", args.expected_hash),
     });
     println!("{}", serde_json::to_string(&output)?);
 

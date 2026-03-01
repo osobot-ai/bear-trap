@@ -12,8 +12,7 @@ import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 ///
 /// @dev Encoding conventions:
 ///   terms (set by delegator, signed, immutable):
-///     abi.encode(bytes32 solutionHash, bytes32 imageId)
-///     - solutionHash: SHA-256 hash of the puzzle solution
+///     abi.encode(bytes32 imageId)
 ///     - imageId: RISC0 guest program image ID
 ///
 ///   args (set by redeemer at call time, NOT signed):
@@ -23,17 +22,17 @@ import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 ///
 ///   The enforcer verifies:
 ///     1. The RISC0 proof is valid via IRiscZeroVerifier.verify(seal, imageId, sha256(journal))
-///     2. The journal's solutionHash matches the terms' solutionHash
-///     3. The journal's solverAddress matches the _redeemer parameter
+///     2. The journal's solverAddress matches the _redeemer parameter
+///
+///   Answer correctness is guaranteed by the guest program assertion during proof generation.
+///   The backend provides the correct expectedHash as private input to the guest. If the guess
+///   is wrong, the guest assertion fails and no proof is generated.
 contract ZKPEnforcer is CaveatEnforcer {
     /// @notice The RISC Zero verifier contract (RiscZeroVerifierRouter on Base)
     IRiscZeroVerifier public immutable verifier;
 
     /// @notice Emitted when a proof is successfully verified
     event ProofVerified(address indexed redeemer, bytes32 indexed solutionHash, bytes32 indexed imageId);
-
-    /// @dev Error thrown when journal's solution hash doesn't match terms
-    error SolutionHashMismatch();
 
     /// @dev Error thrown when journal's solver address doesn't match redeemer
     error SolverAddressMismatch();
@@ -44,9 +43,8 @@ contract ZKPEnforcer is CaveatEnforcer {
     }
 
     /// @notice Validates a RISC0 ZK proof before delegation execution proceeds.
-    /// @dev Reverts if the proof is invalid, solution hash mismatches, or solver address mismatches.
-    ///      This revert is caught by BearTrap's try/catch, consuming the guess ticket.
-    /// @param _terms ABI-encoded (bytes32 solutionHash, bytes32 imageId)
+    /// @dev Reverts if the proof is invalid or solver address mismatches.
+    /// @param _terms ABI-encoded (bytes32 imageId)
     /// @param _args ABI-encoded (bytes seal, bytes journal)
     /// @param _mode ERC-7579 execution mode
     /// @param _executionCalldata The execution payload being authorized
@@ -65,8 +63,8 @@ contract ZKPEnforcer is CaveatEnforcer {
         public
         override
     {
-        // Decode delegator-set terms: the solution hash and guest image ID
-        (bytes32 solutionHash, bytes32 imageId) = abi.decode(_terms, (bytes32, bytes32));
+        // Decode delegator-set terms: just the guest image ID
+        bytes32 imageId = abi.decode(_terms, (bytes32));
 
         // Decode redeemer-set args: the proof seal and journal
         (bytes memory seal, bytes memory journal) = abi.decode(_args, (bytes, bytes));
@@ -77,14 +75,9 @@ contract ZKPEnforcer is CaveatEnforcer {
 
         // Step 2: Decode the journal to extract solver address and solution hash
         // Journal format matches guest output: abi.encode(address solverAddress, bytes32 solutionHash)
-        (address solverAddress, bytes32 journalSolutionHash) = abi.decode(journal, (address, bytes32));
+        (address solverAddress, bytes32 solutionHash) = abi.decode(journal, (address, bytes32));
 
-        // Step 3: Verify the journal's solution hash matches what the delegator committed to
-        if (journalSolutionHash != solutionHash) {
-            revert SolutionHashMismatch();
-        }
-
-        // Step 4: Verify the solver address in the proof matches the redeemer
+        // Step 3: Verify the solver address in the proof matches the redeemer
         // This prevents proof theft — someone can't take another player's proof
         if (solverAddress != _redeemer) {
             revert SolverAddressMismatch();

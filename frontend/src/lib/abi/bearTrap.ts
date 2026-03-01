@@ -9,19 +9,6 @@ export const bearTrapAbi = [
   },
   {
     type: "function",
-    name: "delegationManager",
-    inputs: [],
-    outputs: [
-      {
-        name: "",
-        type: "address",
-        internalType: "contract IDelegationManager",
-      },
-    ],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
     name: "osoToken",
     inputs: [],
     outputs: [
@@ -32,6 +19,13 @@ export const bearTrapAbi = [
   {
     type: "function",
     name: "owner",
+    inputs: [],
+    outputs: [{ name: "", type: "address", internalType: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "operator",
     inputs: [],
     outputs: [{ name: "", type: "address", internalType: "address" }],
     stateMutability: "view",
@@ -49,18 +43,13 @@ export const bearTrapAbi = [
     inputs: [{ name: "puzzleId", type: "uint256", internalType: "uint256" }],
     outputs: [
       {
-        name: "solutionHash",
-        type: "bytes32",
-        internalType: "bytes32",
-      },
-      {
         name: "prizeAmount",
         type: "uint256",
         internalType: "uint256",
       },
-      { name: "winner", type: "address", internalType: "address" },
-      { name: "solved", type: "bool", internalType: "bool" },
       { name: "clueURI", type: "string", internalType: "string" },
+      { name: "solved", type: "bool", internalType: "bool" },
+      { name: "winner", type: "address", internalType: "address" },
     ],
     stateMutability: "view",
   },
@@ -89,20 +78,29 @@ export const bearTrapAbi = [
   },
   {
     type: "function",
-    name: "submitGuess",
+    name: "useTicket",
+    inputs: [
+      { name: "user", type: "address", internalType: "address" },
+      { name: "puzzleId", type: "uint256", internalType: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "markSolved",
     inputs: [
       { name: "puzzleId", type: "uint256", internalType: "uint256" },
-      {
-        name: "_permissionContexts",
-        type: "bytes[]",
-        internalType: "bytes[]",
-      },
-      { name: "_modes", type: "bytes32[]", internalType: "ModeCode[]" },
-      {
-        name: "_executionCallDatas",
-        type: "bytes[]",
-        internalType: "bytes[]",
-      },
+      { name: "winner", type: "address", internalType: "address" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "setOperator",
+    inputs: [
+      { name: "_operator", type: "address", internalType: "address" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
@@ -111,11 +109,6 @@ export const bearTrapAbi = [
     type: "function",
     name: "createPuzzle",
     inputs: [
-      {
-        name: "solutionHash",
-        type: "bytes32",
-        internalType: "bytes32",
-      },
       {
         name: "prizeAmount",
         type: "uint256",
@@ -148,12 +141,6 @@ export const bearTrapAbi = [
         internalType: "uint256",
       },
       {
-        name: "solutionHash",
-        type: "bytes32",
-        indexed: false,
-        internalType: "bytes32",
-      },
-      {
         name: "prizeAmount",
         type: "uint256",
         indexed: false,
@@ -173,7 +160,7 @@ export const bearTrapAbi = [
         internalType: "uint256",
       },
       {
-        name: "solver",
+        name: "winner",
         type: "address",
         indexed: true,
         internalType: "address",
@@ -202,7 +189,7 @@ export const bearTrapAbi = [
   },
   {
     type: "event",
-    name: "WrongGuess",
+    name: "TicketUsed",
     inputs: [
       {
         name: "puzzleId",
@@ -211,10 +198,16 @@ export const bearTrapAbi = [
         internalType: "uint256",
       },
       {
-        name: "guesser",
+        name: "user",
         type: "address",
         indexed: true,
         internalType: "address",
+      },
+      {
+        name: "remainingTickets",
+        type: "uint256",
+        indexed: false,
+        internalType: "uint256",
       },
     ],
     anonymous: false,
@@ -234,6 +227,11 @@ export const bearTrapAbi = [
   {
     type: "error",
     name: "NoTickets",
+    inputs: [],
+  },
+  {
+    type: "error",
+    name: "NotOperator",
     inputs: [],
   },
   {
