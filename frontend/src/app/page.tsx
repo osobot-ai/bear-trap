@@ -3,7 +3,10 @@ import { PuzzleList } from "@/components/PuzzleList";
 import { BuyTickets } from "@/components/BuyTickets";
 import { SubmitGuess } from "@/components/SubmitGuess";
 import { Leaderboard } from "@/components/Leaderboard";
+import { ACTIVE_ENV } from "@/lib/contracts";
 
+const NETWORK_LABEL = ACTIVE_ENV === "mainnet" ? "Base Mainnet" : "Base Sepolia";
+const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
 export default function Home() {
   return (
     <div className="min-h-screen">
@@ -29,7 +32,7 @@ export default function Home() {
             <div className="hidden sm:flex items-center gap-2 rounded-full bg-trap-dark border border-trap-border px-3 py-1.5">
               <div className="h-1.5 w-1.5 rounded-full bg-trap-green animate-pulse-slow" />
               <span className="text-xs font-mono text-trap-muted">
-                Base Mainnet
+                {NETWORK_LABEL}
               </span>
             </div>
             <WalletButton />
@@ -103,7 +106,7 @@ export default function Home() {
             </p>
             <div className="flex items-center gap-6">
               <a
-                href="https://basescan.org"
+                href={EXPLORER_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-trap-muted hover:text-trap-green transition-colors font-mono"

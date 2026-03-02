@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
-import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
+import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID, ACTIVE_ENV } from "@/lib/contracts";
+
+const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
 
 interface LeaderboardEntry {
   address: string;
@@ -233,7 +235,7 @@ export function Leaderboard() {
 
                   <div className="text-right">
                     <a
-                      href={`https://basescan.org/tx/${entry.transactionHash}`}
+                      href={`${EXPLORER_URL}/tx/${entry.transactionHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono text-xs text-trap-muted hover:text-trap-green transition-colors"

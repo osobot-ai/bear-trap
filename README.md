@@ -150,6 +150,7 @@ Environment variables for the API server:
 | `BOUNDLESS_PRIVATE_KEY` | Wallet for Boundless proof requests | (required) |
 | `PINATA_JWT` | For uploading guest ELF to IPFS | (optional) |
 | `BEAR_TRAP_ADDRESS` | Deployed BearTrap contract | (required) |
+| `ENVIRONMENT` | `testnet` or `mainnet` — controls mock proving and DB scoping | `testnet` |
 
 ### Frontend (Next.js)
 
@@ -244,6 +245,80 @@ The frontend is a static Next.js app deployed on Vercel:
 | DelegationManager | `0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3` |
 | RiscZeroVerifierRouter | `0x0b144e07a0826182b6b59788c34b32bfa86fb711` |
 | BoundlessMarket | `0xfd152dadc5183870710fe54f939eae3ab9f0fe82` |
+
+## Testing on Base Sepolia
+
+The project supports full testnet deployment on Base Sepolia for end-to-end testing without real funds.
+
+### Environment Separation
+
+All components support `testnet` and `mainnet` modes:
+
+| Component | Config | Default |
+|-----------|--------|---------|
+| Backend API | `ENVIRONMENT` env var | `testnet` |
+| Admin CLI | `--env <testnet\|mainnet>` flag | `testnet` |
+| Frontend | `NEXT_PUBLIC_ENVIRONMENT` env var | `testnet` |
+
+The database stores an `environment` column on both `puzzles` and `delegations` tables, scoping all queries to the active environment. Puzzle IDs remain globally unique.
+
+### Testnet Deployment
+
+1. **Deploy mock contracts to Base Sepolia:**
+
+```bash
+forge script contracts/scripts/DeployTestnet.s.sol \
+  --rpc-url https://sepolia.base.org \
+  --broadcast -vv
+```
+
+This deploys:
+- `MockRiscZeroVerifier` — always-passing verifier (accepts any proof)
+- `MockOSO` — mintable ERC20 (anyone can call `mint()`)
+- `ZKPEnforcer` — using the mock verifier
+- `BearTrap` — using MockOSO, ticket price 1000 OSO
+
+2. **Set environment variables:**
+
+```bash
+# Backend
+export ENVIRONMENT=testnet
+export BEAR_TRAP_ADDRESS=0x...  # from deployment output
+export RPC_URL=https://sepolia.base.org
+
+# Frontend (.env.local)
+NEXT_PUBLIC_ENVIRONMENT=testnet
+NEXT_PUBLIC_BEAR_TRAP_ADDRESS=0x...
+NEXT_PUBLIC_OSO_TOKEN_ADDRESS=0x...  # MockOSO address
+```
+
+3. **Mint test tokens:**
+
+```bash
+# Using cast (Foundry)
+cast send $MOCK_OSO_ADDRESS "mint(address,uint256)" $YOUR_ADDRESS 1000000000000000000000000 \
+  --rpc-url https://sepolia.base.org --private-key $PRIVATE_KEY
+```
+
+4. **Create puzzles via admin CLI:**
+
+```bash
+bear-trap-admin --env testnet create-puzzle --answer "test answer" --clue-uri "ipfs://..."
+bear-trap-admin --env testnet list-puzzles
+```
+
+### Mock Proving
+
+When `ENVIRONMENT=testnet`, the backend skips Boundless SDK and returns mock proofs:
+- Mock seal: 32 zero bytes (accepted by MockRiscZeroVerifier)
+- Mock journal: properly ABI-encoded `(solverAddress, solutionHash)` so ZKPEnforcer can decode it
+- The guess hash is still verified locally — wrong guesses still fail
+
+### Testnet Faucets
+
+- **Base Sepolia ETH**: [Coinbase Faucet](https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet) or [Alchemy Faucet](https://sepoliafaucet.com/)
+- **Mock $OSO**: Mint directly via the MockOSO contract (`mint()` is public)
+
 
 ## Security
 

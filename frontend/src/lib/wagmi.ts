@@ -1,13 +1,20 @@
 import { createConfig } from "wagmi";
 import { http } from "viem";
-import { base } from "wagmi/chains";
+import { base, baseSepolia } from "viem/chains";
 import { getDefaultConfig } from "connectkit";
+import { ACTIVE_ENV } from "@/lib/contracts";
+
+const chain = ACTIVE_ENV === "mainnet" ? base : baseSepolia;
+const transport =
+  ACTIVE_ENV === "mainnet"
+    ? http("https://mainnet.base.org")
+    : http("https://sepolia.base.org");
 
 export const config = createConfig(
   getDefaultConfig({
-    chains: [base],
+    chains: [chain],
     transports: {
-      [base.id]: http("https://mainnet.base.org"),
+      [chain.id]: transport,
     },
     walletConnectProjectId:
       process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",

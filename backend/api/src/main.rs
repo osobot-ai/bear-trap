@@ -27,6 +27,7 @@ use shared::Db;
 struct AppState {
     db: Mutex<Db>,
     prover_config: ProverConfig,
+    environment: String,
     #[allow(dead_code)]
     operator_private_key: String,
     #[allow(dead_code)]
@@ -78,7 +79,7 @@ struct ProveSuccessResponse {
 /// GET /api/puzzles — list all puzzles with prize info from active delegation.
 async fn list_puzzles(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let db = state.db.lock().await;
-    match db.list_puzzles() {
+    match db.list_puzzles(&state.environment) {
         Ok(puzzles) => {
             let response: Vec<PuzzleResponse> = puzzles
                 .into_iter()
@@ -112,7 +113,7 @@ async fn get_puzzle(
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     let db = state.db.lock().await;
-    match db.get_puzzle(id) {
+    match db.get_puzzle(&state.environment, id) {
         Ok(Some(p)) => (
             StatusCode::OK,
             Json(PuzzleResponse {
@@ -186,7 +187,7 @@ async fn prove(
     let (puzzle, delegation) = {
         let db = state.db.lock().await;
 
-        let puzzle = match db.get_puzzle(req.puzzle_id) {
+        let puzzle = match db.get_puzzle(&state.environment, req.puzzle_id) {
             Ok(Some(p)) => p,
             Ok(None) => {
                 return (
@@ -222,7 +223,7 @@ async fn prove(
                 .into_response();
         }
 
-        let delegation = match db.get_active_delegation(req.puzzle_id) {
+        let delegation = match db.get_active_delegation(&state.environment, req.puzzle_id) {
             Ok(d) => d,
             Err(e) => {
                 tracing::error!("DB error reading delegation: {e}");
@@ -260,14 +261,24 @@ async fn prove(
         req.puzzle_id
     );
 
-    // Step 4: Generate ZK proof
-    let proof_result = prover::generate_proof(
-        &state.prover_config,
-        &req.passphrase,
-        &req.solver_address,
-        &puzzle.solution_hash,
-    )
-    .await;
+    // Step 4: Generate ZK proof (mock or real depending on environment)
+    let proof_result = if state.environment == "testnet" {
+        tracing::info!("Using mock proving (testnet mode)");
+        prover::generate_mock_proof(
+            &req.passphrase,
+            &req.solver_address,
+            &puzzle.solution_hash,
+        )
+        .await
+    } else {
+        prover::generate_proof(
+            &state.prover_config,
+            &req.passphrase,
+            &req.solver_address,
+            &puzzle.solution_hash,
+        )
+        .await
+    };
 
     match proof_result {
         Ok(result) => {
@@ -344,6 +355,7 @@ async fn main() -> anyhow::Result<()> {
     let boundless_private_key = env::var("BOUNDLESS_PRIVATE_KEY").unwrap_or_default();
     let pinata_jwt = env::var("PINATA_JWT").ok();
     let bear_trap_address = env::var("BEAR_TRAP_ADDRESS").unwrap_or_default();
+    let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "testnet".into());
 
     // Ensure data directory exists
     if let Some(parent) = std::path::Path::new(&database_path).parent() {
@@ -354,6 +366,7 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::open(&database_path)?;
     db.init()?;
     tracing::info!("Database initialized at {database_path}");
+    tracing::info!("Bear Trap API running in {} mode", environment);
 
     let prover_config = ProverConfig {
         rpc_url: rpc_url.clone(),
@@ -364,6 +377,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         db: Mutex::new(db),
         prover_config,
+        environment,
         operator_private_key,
         rpc_url,
         bear_trap_address,

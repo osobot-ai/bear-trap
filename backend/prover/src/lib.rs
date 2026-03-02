@@ -42,6 +42,68 @@ pub struct ProofResult {
     pub solution_hash: String,
 }
 
+/// Generate a mock ZK proof for testnet.
+///
+/// Returns a mock seal (32 zero bytes) and a properly ABI-encoded journal
+/// containing `(solverAddress, solutionHash)`. The MockRiscZeroVerifier on
+/// testnet will accept any seal, so this is sufficient for end-to-end testing.
+pub async fn generate_mock_proof(
+    guess: &str,
+    solver_address: &str,
+    expected_hash: &str,
+) -> Result<ProofResult> {
+    // Quick local check: hash the guess and compare to expected hash.
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(guess.as_bytes());
+    let guess_hash = hex::encode(hasher.finalize());
+    let expected_clean = expected_hash.strip_prefix("0x").unwrap_or(expected_hash);
+
+    if guess_hash != expected_clean {
+        anyhow::bail!("Wrong guess. Your ticket has been consumed.");
+    }
+
+    // ABI-encode journal: (address solverAddress, bytes32 solutionHash)
+    // address is left-padded to 32 bytes, bytes32 is already 32 bytes
+    let journal = encode_journal(solver_address, expected_hash)?;
+
+    Ok(ProofResult {
+        seal: vec![0u8; 32], // mock seal — MockRiscZeroVerifier accepts anything
+        journal,
+        solver_address: solver_address.to_string(),
+        solution_hash: expected_hash.to_string(),
+    })
+}
+
+/// ABI-encode `(address, bytes32)` matching the guest program's journal output format.
+fn encode_journal(solver_address: &str, solution_hash: &str) -> Result<Vec<u8>> {
+    let addr_clean = solver_address.strip_prefix("0x").unwrap_or(solver_address);
+    let hash_clean = solution_hash.strip_prefix("0x").unwrap_or(solution_hash);
+
+    let addr_bytes = hex::decode(addr_clean)?;
+    if addr_bytes.len() != 20 {
+        anyhow::bail!("Invalid solver address length: expected 20 bytes, got {}", addr_bytes.len());
+    }
+
+    let hash_bytes = hex::decode(hash_clean)?;
+    if hash_bytes.len() != 32 {
+        anyhow::bail!("Invalid solution hash length: expected 32 bytes, got {}", hash_bytes.len());
+    }
+
+    // ABI encoding: address is left-padded to 32 bytes, bytes32 is 32 bytes
+    let mut encoded = Vec::with_capacity(64);
+
+    // Pad address to 32 bytes (left-padded with zeros)
+    let mut addr_padded = [0u8; 32];
+    addr_padded[12..32].copy_from_slice(&addr_bytes);
+    encoded.extend_from_slice(&addr_padded);
+
+    // bytes32 is already 32 bytes
+    encoded.extend_from_slice(&hash_bytes);
+
+    Ok(encoded)
+}
+
 /// Generate a ZK proof that `guess` hashes to `expected_hash`.
 ///
 /// # TODO: Implement with Boundless SDK
@@ -121,4 +183,54 @@ pub async fn generate_proof(
          The guess hash matches, but proof generation requires the boundless-market crate. \
          See prover/src/lib.rs for implementation notes."
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_journal() {
+        let addr = "0x000000000000000000000000000000000000bEEF";
+        let hash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let journal = encode_journal(addr, hash).unwrap();
+        assert_eq!(journal.len(), 64);
+        // Address should be in last 20 bytes of first 32-byte word
+        assert_eq!(journal[30], 0xbe);
+        assert_eq!(journal[31], 0xef);
+    }
+
+    #[tokio::test]
+    async fn test_mock_proof_correct_guess() {
+        use sha2::{Digest, Sha256};
+        let guess = "secret answer";
+        let mut hasher = Sha256::new();
+        hasher.update(guess.as_bytes());
+        let hash = format!("0x{}", hex::encode(hasher.finalize()));
+
+        let result = generate_mock_proof(
+            guess,
+            "0x000000000000000000000000000000000000bEEF",
+            &hash,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.seal.len(), 32);
+        assert!(result.seal.iter().all(|&b| b == 0));
+        assert_eq!(result.journal.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn test_mock_proof_wrong_guess() {
+        let result = generate_mock_proof(
+            "wrong answer",
+            "0x000000000000000000000000000000000000bEEF",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Wrong guess"));
+    }
 }

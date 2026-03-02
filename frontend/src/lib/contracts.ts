@@ -1,17 +1,37 @@
 import { type Address } from "viem";
 
-export const BASE_CHAIN_ID = 8453 as const;
+export const BASE_SEPOLIA_CHAIN_ID = 84532 as const;
 
-export const BEAR_TRAP_ADDRESS: Address =
-  (process.env.NEXT_PUBLIC_BEAR_TRAP_ADDRESS as Address) ??
-  "0x0000000000000000000000000000000000000000";
+// Chain-specific addresses
+export const CONTRACTS = {
+  mainnet: {
+    bearTrap: (process.env.NEXT_PUBLIC_BEAR_TRAP_ADDRESS ??
+      "0x0000000000000000000000000000000000000000") as Address,
+    delegationManager:
+      "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3" as Address,
+    osoToken: "0xc78fabc2cb5b9cf59e0af3da8e3bc46d47753a4e" as Address,
+    chainId: 8453 as const,
+  },
+  testnet: {
+    bearTrap: (process.env.NEXT_PUBLIC_BEAR_TRAP_ADDRESS ??
+      "0x0000000000000000000000000000000000000000") as Address,
+    delegationManager:
+      "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3" as Address,
+    osoToken: (process.env.NEXT_PUBLIC_OSO_TOKEN_ADDRESS ??
+      "0x0000000000000000000000000000000000000000") as Address,
+    chainId: 84532 as const,
+  },
+} as const;
 
-export const OSO_TOKEN_ADDRESS: Address =
-  "0xc78fabc2cb5b9cf59e0af3da8e3bc46d47753a4e";
+export const ACTIVE_ENV = (process.env.NEXT_PUBLIC_ENVIRONMENT ||
+  "testnet") as keyof typeof CONTRACTS;
+export const ACTIVE_CONTRACTS = CONTRACTS[ACTIVE_ENV];
 
-/** MetaMask Delegation Manager on Base */
-export const DELEGATION_MANAGER_ADDRESS: Address =
-  "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3";
+// Convenience re-exports matching the old API for backward compatibility
+export const BASE_CHAIN_ID = ACTIVE_CONTRACTS.chainId;
+export const BEAR_TRAP_ADDRESS = ACTIVE_CONTRACTS.bearTrap;
+export const OSO_TOKEN_ADDRESS = ACTIVE_CONTRACTS.osoToken;
+export const DELEGATION_MANAGER_ADDRESS = ACTIVE_CONTRACTS.delegationManager;
 
 /**
  * Cost per ticket in $OSO (raw token units).

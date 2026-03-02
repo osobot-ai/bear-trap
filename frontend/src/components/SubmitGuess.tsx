@@ -10,7 +10,9 @@ import {
 import { encodeAbiParameters, type Hex } from "viem";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { delegationManagerAbi } from "@/lib/abi/delegationManager";
-import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL } from "@/lib/contracts";
+import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV } from "@/lib/contracts";
+
+const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
 
 type SubmitStep =
   | "idle"
@@ -396,7 +398,7 @@ export function SubmitGuess() {
             </div>
             {redeemHash && (
               <a
-                href={`https://basescan.org/tx/${redeemHash}`}
+                href={`${EXPLORER_URL}/tx/${redeemHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block text-xs font-mono text-trap-green hover:text-trap-green-dim transition-colors underline decoration-trap-green/30 underline-offset-2"

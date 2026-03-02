@@ -12,6 +12,10 @@ use shared::Db;
 #[command(name = "bear-trap-admin")]
 #[command(about = "Bear Trap puzzle and delegation management CLI")]
 struct Cli {
+    /// Environment to operate in: testnet or mainnet (default: testnet).
+    #[arg(long, default_value = "testnet", global = true)]
+    env: String,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -96,6 +100,7 @@ fn sha256_hex(input: &str) -> String {
 
 fn main() {
     let cli = Cli::parse();
+    let environment = &cli.env;
 
     match cli.command {
         Commands::Init => {
@@ -111,10 +116,10 @@ fn main() {
 
             let solution_hash = sha256_hex(&answer);
             let id = db
-                .create_puzzle(&solution_hash, &clue_uri)
+                .create_puzzle(environment, &solution_hash, &clue_uri)
                 .expect("Failed to create puzzle");
 
-            println!("Created puzzle #{id} (hash: {solution_hash})");
+            println!("Created puzzle #{id} ({environment}) (hash: {solution_hash})");
         }
 
         Commands::AddDelegation {
@@ -124,9 +129,9 @@ fn main() {
         } => {
             let db = get_db();
             let id = db
-                .add_delegation(puzzle_id, &delegation, &prize)
+                .add_delegation(environment, puzzle_id, &delegation, &prize)
                 .expect("Failed to add delegation");
-            println!("Added delegation #{id} for puzzle #{puzzle_id} (prize: {prize} ETH)");
+            println!("Added delegation #{id} for puzzle #{puzzle_id} ({environment}) (prize: {prize} ETH)");
         }
 
         Commands::UpdateDelegation {
@@ -135,23 +140,23 @@ fn main() {
             prize,
         } => {
             let db = get_db();
-            db.update_delegation(puzzle_id, &delegation, &prize)
+            db.update_delegation(environment, puzzle_id, &delegation, &prize)
                 .expect("Failed to update delegation");
-            println!("Updated delegation for puzzle #{puzzle_id} (prize: {prize} ETH)");
+            println!("Updated delegation for puzzle #{puzzle_id} ({environment}) (prize: {prize} ETH)");
         }
 
         Commands::ListPuzzles => {
             let db = get_db();
             db.init().expect("Failed to initialize database");
 
-            let puzzles = db.list_puzzles().expect("Failed to list puzzles");
+            let puzzles = db.list_puzzles(environment).expect("Failed to list puzzles");
 
             if puzzles.is_empty() {
-                println!("No puzzles found.");
+                println!("No puzzles found ({environment}).");
                 return;
             }
 
-            println!("\nPuzzles ({} total):\n", puzzles.len());
+            println!("\nPuzzles — {environment} ({} total):\n", puzzles.len());
             println!(
                 "  {:<4} | {:<11} | {:<22} | {:<6} | {}",
                 "ID", "Prize (ETH)", "Hash (first 18)", "Solved", "Winner"
@@ -176,9 +181,9 @@ fn main() {
 
         Commands::MarkSolved { puzzle_id, winner } => {
             let db = get_db();
-            db.mark_solved(puzzle_id, &winner)
+            db.mark_solved(environment, puzzle_id, &winner)
                 .expect("Failed to mark puzzle as solved");
-            println!("Marked puzzle #{puzzle_id} as solved (winner: {winner})");
+            println!("Marked puzzle #{puzzle_id} ({environment}) as solved (winner: {winner})");
         }
     }
 }
