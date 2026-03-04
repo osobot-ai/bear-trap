@@ -44,6 +44,7 @@ sol! {
         error InvalidPuzzleId();
 
         function useTicket(address user, uint256 puzzleId) external;
+        function markSolved(uint256 puzzleId, address winner) external;
     }
 }
 
@@ -98,6 +99,13 @@ struct ProveSuccessResponse {
     solver_address: String,
     solution_hash: String,
     delegation: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkSolvedRequest {
+    puzzle_id: i64,
+    winner: String,
 }
 
 // ── Handlers ────────────────────────────────────────────────
@@ -437,7 +445,7 @@ async fn prove(
 
             if is_wrong_guess {
                 (
-                    StatusCode::OK,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     Json(ErrorResponse {
                         error: "Wrong guess. Your ticket has been consumed.".into(),
                         ticket_burned: Some(true),
@@ -462,6 +470,125 @@ async fn prove(
 /// Health check endpoint.
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
+}
+
+async fn mark_solved(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MarkSolvedRequest>,
+) -> impl IntoResponse {
+    let winner_addr: Address = match req.winner.parse() {
+        Ok(a) => a,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid winner address".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let bear_trap_addr: Address = match state.bear_trap_address.parse() {
+        Ok(a) => a,
+        Err(_) => {
+            tracing::error!("Invalid BEAR_TRAP_ADDRESS: {}", state.bear_trap_address);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Server misconfiguration: invalid contract address".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let rpc_url: url::Url = match state.rpc_url.parse() {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Server misconfiguration: invalid RPC URL".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let wallet = EthereumWallet::from(state.operator_signer.clone());
+    let provider = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_http(rpc_url);
+
+    let contract = BearTrap::new(bear_trap_addr, provider);
+    let puzzle_id_u256 = alloy::primitives::U256::from(req.puzzle_id as u64);
+
+    tracing::info!(
+        "Calling markSolved for puzzle {} winner {}",
+        req.puzzle_id,
+        req.winner
+    );
+
+    match contract.markSolved(puzzle_id_u256, winner_addr).send().await {
+        Ok(tx) => match tx.get_receipt().await {
+            Ok(receipt) => {
+                tracing::info!(
+                    "markSolved confirmed in block {:?}, tx: {}",
+                    receipt.block_number,
+                    receipt.transaction_hash,
+                );
+            }
+            Err(e) => {
+                tracing::error!("markSolved tx failed to confirm: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "markSolved transaction failed to confirm".into(),
+                        ticket_burned: None,
+                    }),
+                )
+                    .into_response();
+            }
+        },
+        Err(e) => {
+            let err_string = format!("{e}");
+            tracing::error!("markSolved reverted: {err_string}");
+
+            let user_error = if err_string.contains("AlreadySolved") {
+                "Puzzle already marked as solved."
+            } else if err_string.contains("InvalidPuzzleId") {
+                "Invalid puzzle ID."
+            } else {
+                "On-chain markSolved failed."
+            };
+
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: user_error.into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    }
+
+    {
+        let db = state.db.lock().await;
+        if let Err(e) = db.mark_solved(&state.environment, req.puzzle_id, &req.winner) {
+            tracing::error!("Failed to mark puzzle solved in DB: {e}");
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "solved", "puzzleId": req.puzzle_id, "winner": req.winner})),
+    )
+        .into_response()
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -549,6 +676,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/puzzles", get(list_puzzles))
         .route("/api/puzzles/{id}", get(get_puzzle))
         .route("/api/prove", post(prove))
+        .route("/api/mark-solved", post(mark_solved))
         .route("/health", get(health))
         .layer(cors)
         .with_state(state);
