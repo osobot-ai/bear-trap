@@ -6,7 +6,7 @@ use std::env;
 
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
-use shared::Db;
+use shared::{Db, validate_delegation_json};
 
 #[derive(Parser)]
 #[command(name = "bear-trap-admin")]
@@ -130,6 +130,8 @@ fn main() {
             delegation,
             prize,
         } => {
+            // Validate delegation JSON schema before storing
+            validate_delegation_json(&delegation).expect("Delegation JSON validation failed");
             let db = get_db();
             let id = db
                 .add_delegation(environment, puzzle_id, &delegation, &prize)
@@ -142,6 +144,8 @@ fn main() {
             delegation,
             prize,
         } => {
+            // Validate delegation JSON schema before storing
+            validate_delegation_json(&delegation).expect("Delegation JSON validation failed");
             let db = get_db();
             db.update_delegation(environment, puzzle_id, &delegation, &prize)
                 .expect("Failed to update delegation");
