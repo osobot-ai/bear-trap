@@ -91,7 +91,7 @@ bear-trap/
 │   │   │   ├── SubmitGuess.tsx    # Calls BACKEND_URL/api/prove
 │   │   │   ├── PuzzleList.tsx     # Fetches from BACKEND_URL/api/puzzles
 │   │   │   ├── PuzzleCard.tsx     # Individual puzzle card with prize
-│   │   │   ├── Leaderboard.tsx    # PuzzleSolved/WrongGuess events
+│   │   │   ├── Leaderboard.tsx    # PuzzleSolved/TicketUsed events
 │   │   │   └── WalletButton.tsx
 │   │   └── lib/
 │   │       ├── abi/               # Contract ABIs

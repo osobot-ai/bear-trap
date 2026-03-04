@@ -25,7 +25,7 @@ export function Leaderboard() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch historical PuzzleSolved and WrongGuess events
+  // Fetch historical PuzzleSolved and TicketUsed events
   useEffect(() => {
     if (!publicClient) {
       setIsLoading(false);
@@ -37,7 +37,7 @@ export function Leaderboard() {
     async function fetchEvents() {
       try {
         // Fetch both event types in parallel
-        const [solvedLogs, wrongLogs] = await Promise.all([
+        const [solvedLogs, ticketUsedLogs] = await Promise.all([
           publicClient!.getLogs({
             address: BEAR_TRAP_ADDRESS,
             event: {
@@ -50,7 +50,7 @@ export function Leaderboard() {
                   indexed: true,
                 },
                 {
-                  name: "solver",
+                  name: "winner",
                   type: "address",
                   indexed: true,
                 },
@@ -63,7 +63,7 @@ export function Leaderboard() {
             address: BEAR_TRAP_ADDRESS,
             event: {
               type: "event",
-              name: "WrongGuess",
+              name: "TicketUsed",
               inputs: [
                 {
                   name: "puzzleId",
@@ -71,9 +71,14 @@ export function Leaderboard() {
                   indexed: true,
                 },
                 {
-                  name: "guesser",
+                  name: "user",
                   type: "address",
                   indexed: true,
+                },
+                {
+                  name: "remainingTickets",
+                  type: "uint256",
+                  indexed: false,
                 },
               ],
             },
@@ -85,15 +90,15 @@ export function Leaderboard() {
         if (cancelled) return;
 
         const solvedEntries: LeaderboardEntry[] = solvedLogs.map((log) => ({
-          address: (log.args.solver as string) ?? "0x",
+          address: (log.args.winner as string) ?? "0x",
           puzzleId: Number(log.args.puzzleId ?? 0),
           correct: true,
           blockNumber: log.blockNumber,
           transactionHash: log.transactionHash,
         }));
 
-        const wrongEntries: LeaderboardEntry[] = wrongLogs.map((log) => ({
-          address: (log.args.guesser as string) ?? "0x",
+        const ticketUsedEntries: LeaderboardEntry[] = ticketUsedLogs.map((log) => ({
+          address: (log.args.user as string) ?? "0x",
           puzzleId: Number(log.args.puzzleId ?? 0),
           correct: false,
           blockNumber: log.blockNumber,
@@ -101,7 +106,9 @@ export function Leaderboard() {
         }));
 
         // Combine and sort by block number descending (newest first)
-        const all = [...solvedEntries, ...wrongEntries].sort(
+        // TicketUsed entries that also have a matching PuzzleSolved are guess attempts;
+        // we mark TicketUsed as "Attempt" and PuzzleSolved as "Solved"
+        const all = [...solvedEntries, ...ticketUsedEntries].sort(
           (a, b) => Number(b.blockNumber - a.blockNumber)
         );
 
@@ -129,7 +136,7 @@ export function Leaderboard() {
             Recent Activity
           </h2>
           <p className="mt-1 text-sm text-trap-muted">
-            Guess attempts and puzzle solutions
+            Ticket usage and puzzle solutions
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-trap-dark border border-trap-border px-3 py-1.5">
@@ -230,7 +237,7 @@ export function Leaderboard() {
                       entry.correct ? "text-trap-green" : "text-trap-red"
                     }`}
                   >
-                    {entry.correct ? "Solved" : "Wrong"}
+                    {entry.correct ? "Solved" : "Attempt"}
                   </span>
 
                   <div className="text-right">
