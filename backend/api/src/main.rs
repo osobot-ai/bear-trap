@@ -168,7 +168,7 @@ async fn get_puzzle(
 /// Flow:
 /// 1. Read puzzle from DB, check not solved
 /// 2. Read active delegation from DB
-/// 3. Call useTicket(solverAddress, puzzleId) on BearTrap contract (TODO: on-chain call)
+/// 3. Call useTicket(solverAddress, puzzleId) on BearTrap contract
 /// 4. Wait for tx confirmation
 /// 5. Call prover with (guess, solverAddress, solutionHash)
 /// 6. Return proof data or error
