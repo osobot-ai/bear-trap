@@ -265,3 +265,67 @@ async fn e2e_multiple_puzzles_independent() {
     let wrong = generate_mock_proof("wrong answer", solver, &format!("0x{}", hash2)).await;
     assert!(wrong.is_err());
 }
+
+// ── Invalid Input Tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn e2e_mock_proof_invalid_solver_address() {
+    use sha2::{Digest, Sha256};
+
+    let answer = "test answer";
+    let mut hasher = Sha256::new();
+    hasher.update(answer.as_bytes());
+    let hash = format!("0x{}", hex::encode(hasher.finalize()));
+
+    let result = generate_mock_proof(answer, "not-a-hex-address", &hash).await;
+    assert!(result.is_err(), "Non-hex solver address should fail");
+}
+
+#[tokio::test]
+async fn e2e_mock_proof_empty_solver_address() {
+    use sha2::{Digest, Sha256};
+
+    let answer = "test answer";
+    let mut hasher = Sha256::new();
+    hasher.update(answer.as_bytes());
+    let hash = format!("0x{}", hex::encode(hasher.finalize()));
+
+    let result = generate_mock_proof(answer, "", &hash).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn e2e_mock_proof_invalid_solution_hash_length() {
+    let solver = "0x000000000000000000000000000000000000bEEF";
+
+    let result = generate_mock_proof("anything", solver, "0xabcd").await;
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Invalid solution hash length") || err.contains("Wrong guess"),
+        "Expected hash length or wrong guess error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_mock_proof_invalid_solution_hash_not_hex() {
+    let solver = "0x000000000000000000000000000000000000bEEF";
+
+    let result =
+        generate_mock_proof("anything", solver, "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ").await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn e2e_mock_proof_solution_hash_without_0x_prefix() {
+    use sha2::{Digest, Sha256};
+
+    let answer = "prefix test";
+    let mut hasher = Sha256::new();
+    hasher.update(answer.as_bytes());
+    let hash_no_prefix = hex::encode(hasher.finalize());
+    let solver = "0x000000000000000000000000000000000000bEEF";
+
+    let result = generate_mock_proof(answer, solver, &hash_no_prefix).await;
+    assert!(result.is_ok(), "Hash without 0x prefix should still work");
+}

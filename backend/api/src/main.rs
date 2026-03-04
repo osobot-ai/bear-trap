@@ -5,7 +5,13 @@
 //! - GET  /api/puzzles/:id  — get a single puzzle
 //! - POST /api/prove        — burn ticket + generate ZK proof
 
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Instant,
+};
 
 use alloy::{
     network::EthereumWallet,
@@ -15,7 +21,7 @@ use alloy::{
     sol,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -47,10 +53,14 @@ struct AppState {
     db: Mutex<Db>,
     prover_config: ProverConfig,
     environment: String,
-    operator_private_key: String,
+    operator_signer: PrivateKeySigner,
     rpc_url: String,
     bear_trap_address: String,
+    rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
 }
+
+const RATE_LIMIT_MAX_REQUESTS: usize = 5;
+const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
 // ── Request / Response Types ────────────────────────────────
 
@@ -173,10 +183,29 @@ async fn get_puzzle(
 /// 5. Call prover with (guess, solverAddress, solutionHash)
 /// 6. Return proof data or error
 async fn prove(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
     Json(req): Json<ProveRequest>,
 ) -> impl IntoResponse {
-    // Validate request fields
+    {
+        let mut limiter = state.rate_limiter.lock().await;
+        let now = Instant::now();
+        let window = std::time::Duration::from_secs(RATE_LIMIT_WINDOW_SECS);
+        let timestamps = limiter.entry(addr.ip()).or_default();
+        timestamps.retain(|t| now.duration_since(*t) < window);
+        if timestamps.len() >= RATE_LIMIT_MAX_REQUESTS {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ErrorResponse {
+                    error: "Rate limit exceeded. Try again later.".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+        timestamps.push(now);
+    }
+
     if req.passphrase.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -287,20 +316,7 @@ async fn prove(
         }
     };
 
-    let signer: PrivateKeySigner = match state.operator_private_key.parse() {
-        Ok(s) => s,
-        Err(_) => {
-            tracing::error!("Invalid OPERATOR_PRIVATE_KEY");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Server misconfiguration: invalid operator key".into(),
-                    ticket_burned: None,
-                }),
-            )
-                .into_response();
-        }
-    };
+    let signer = state.operator_signer.clone();
 
     let rpc_url: url::Url = match state.rpc_url.parse() {
         Ok(u) => u,
@@ -484,6 +500,17 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Database initialized at {database_path}");
     tracing::info!("Bear Trap API running in {} mode", environment);
 
+    let operator_signer: PrivateKeySigner = if operator_private_key.is_empty() {
+        tracing::warn!("OPERATOR_PRIVATE_KEY not set — prove endpoint will fail");
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+            .parse()
+            .expect("fallback key must parse")
+    } else {
+        operator_private_key
+            .parse()
+            .expect("OPERATOR_PRIVATE_KEY is not a valid private key")
+    };
+
     let prover_config = ProverConfig {
         rpc_url: rpc_url.clone(),
         private_key: boundless_private_key,
@@ -494,9 +521,10 @@ async fn main() -> anyhow::Result<()> {
         db: Mutex::new(db),
         prover_config,
         environment,
-        operator_private_key,
+        operator_signer,
         rpc_url,
         bear_trap_address,
+        rate_limiter: Mutex::new(HashMap::new()),
     });
 
     // Configure CORS
@@ -530,7 +558,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("CORS: allowing origin {frontend_url}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

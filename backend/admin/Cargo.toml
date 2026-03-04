@@ -13,3 +13,8 @@ shared = { workspace = true }
 clap = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+shared = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

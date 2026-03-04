@@ -93,6 +93,43 @@ fn encode_journal(solver_address: &str, solution_hash: &str) -> Result<Vec<u8>> 
     Ok(encoded)
 }
 
+fn load_guest_elf() -> Result<Vec<u8>> {
+    const LOCAL_DEV_PATH: &str =
+        "guests/puzzle-solver/target/riscv-guest/riscv32im-risc0-zkvm-elf/release/puzzle-solver";
+    const DOCKER_PATH: &str = "/app/puzzle-solver.elf";
+
+    let paths: Vec<(&str, &str)> = if let Ok(env_path) = std::env::var("GUEST_ELF_PATH") {
+        // Leak is fine here — this runs once and lives for the process lifetime
+        let leaked: &'static str = Box::leak(env_path.into_boxed_str());
+        vec![
+            (leaked, "GUEST_ELF_PATH"),
+            (LOCAL_DEV_PATH, "local dev"),
+            (DOCKER_PATH, "Docker/Railway"),
+        ]
+    } else {
+        vec![
+            (LOCAL_DEV_PATH, "local dev"),
+            (DOCKER_PATH, "Docker/Railway"),
+        ]
+    };
+
+    for (path, label) in &paths {
+        if let Ok(elf) = std::fs::read(path) {
+            tracing::info!("Loaded guest ELF from {} path: {}", label, path);
+            return Ok(elf);
+        }
+    }
+
+    anyhow::bail!(
+        "Failed to read guest ELF binary from any path. Tried: {}",
+        paths
+            .iter()
+            .map(|(p, _)| *p)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// Generate a real ZK proof via Boundless Market.
 ///
 /// Uses offchain-first submission (falls back to onchain if needed).
@@ -145,16 +182,8 @@ pub async fn generate_proof(
     };
     let encoded_input = input.abi_encode();
 
-    // Load the guest ELF binary
-    let guest_elf = std::fs::read(
-        "guests/puzzle-solver/target/riscv-guest/riscv32im-risc0-zkvm-elf/release/puzzle-solver",
-    )
-    .or_else(|_| std::fs::read("/app/puzzle-solver.elf"))
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to read guest ELF binary. Ensure the guest is built. Error: {e}"
-        )
-    })?;
+    // Load the guest ELF binary with priority: env var > local dev > Docker/Railway
+    let guest_elf = load_guest_elf()?;
 
     let rpc_url: url::Url = config.rpc_url.parse()?;
 
