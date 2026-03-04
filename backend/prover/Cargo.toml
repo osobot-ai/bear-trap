@@ -25,4 +25,4 @@ tokio = { workspace = true, features = ["full"] }
 # Vendored OpenSSL to avoid needing system libssl-dev
 
 # Vendored OpenSSL for transitive deps (tokio-tungstenite → native-tls)
-openssl-sys = { workspace = true }
+

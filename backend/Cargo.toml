@@ -55,6 +55,5 @@ lto = "thin"
 
 
 # Vendored OpenSSL — avoid system libssl-dev dependency
-[workspace.dependencies.openssl-sys]
-version = "0.9"
-features = ["vendored"]
+
+# Force rustls instead of native-tls/openssl for websocket deps

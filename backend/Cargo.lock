@@ -1299,6 +1299,7 @@ dependencies = [
  "prover",
  "serde",
  "serde_json",
+ "sha2",
  "shared",
  "tokio",
  "tower-http",
