@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   useAccount,
   useReadContract,
@@ -23,11 +23,27 @@ type SubmitStep =
   | "wrong"
   | "error";
 
+interface DelegationCaveat {
+  enforcer: string;
+  terms: string;
+  args: string;
+}
+
+interface DelegationData {
+  delegate: string;
+  delegator: string;
+  authority: string;
+  caveats: DelegationCaveat[];
+  salt: string;
+  signature: string;
+}
+
 interface ProveResult {
   seal: string;
   journal: string;
   solverAddress: string;
   solutionHash: string;
+  delegation: DelegationData | null;
 }
 
 export function SubmitGuess() {
@@ -66,6 +82,24 @@ export function SubmitGuess() {
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({ hash: redeemHash });
+
+  const markSolvedCalled = useRef(false);
+
+  useEffect(() => {
+    if (!isConfirmed || markSolvedCalled.current || !address) return;
+    markSolvedCalled.current = true;
+
+    fetch(`${BACKEND_URL}/api/mark-solved`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        puzzleId: parseInt(puzzleId),
+        winner: address,
+      }),
+    }).catch((err) => {
+      console.warn("Failed to call mark-solved (prize was still claimed):", err);
+    });
+  }, [isConfirmed, puzzleId, address]);
 
   const count = puzzleCount ? Number(puzzleCount) : 0;
   const tickets = ticketBalance ? Number(ticketBalance) : 0;
@@ -115,25 +149,63 @@ export function SubmitGuess() {
 
   // Step 2: Submit redeemDelegations with the proof
   const handleRedeemPrize = useCallback(() => {
-    if (!proofData || !address) return;
+    if (!proofData || !address || !proofData.delegation) return;
 
     const seal = proofData.seal as Hex;
     const journal = proofData.journal as Hex;
+    const delegation = proofData.delegation;
 
-    // Construct ZKPEnforcer caveat args: abi.encode(bytes seal, bytes journal)
+    const delegationTuple = {
+      delegate: delegation.delegate as `0x${string}`,
+      delegator: delegation.delegator as `0x${string}`,
+      authority: delegation.authority as `0x${string}`,
+      caveats: delegation.caveats.map((c) => ({
+        enforcer: c.enforcer as `0x${string}`,
+        terms: (c.terms || "0x") as Hex,
+        args: (c.args || "0x") as Hex,
+      })),
+      salt: BigInt(delegation.salt),
+      signature: delegation.signature as Hex,
+    };
+
     const caveatArgs = encodeAbiParameters(
       [{ type: "bytes" }, { type: "bytes" }],
       [seal, journal]
     );
 
-    // Build permissionContexts with the caveat args
-    const permissionContexts: Hex[] = [caveatArgs];
+    // DelegationManager expects each permissionContext to be abi.encode(Delegation[], bytes[])
+    const permissionContext = encodeAbiParameters(
+      [
+        {
+          type: "tuple[]",
+          components: [
+            { name: "delegate", type: "address" },
+            { name: "delegator", type: "address" },
+            { name: "authority", type: "bytes32" },
+            {
+              name: "caveats",
+              type: "tuple[]",
+              components: [
+                { name: "enforcer", type: "address" },
+                { name: "terms", type: "bytes" },
+                { name: "args", type: "bytes" },
+              ],
+            },
+            { name: "salt", type: "uint256" },
+            { name: "signature", type: "bytes" },
+          ],
+        },
+        { type: "bytes[]" },
+      ],
+      [[delegationTuple], [caveatArgs]]
+    );
 
-    // ModeCode for single default execution (bytes32 of zeros)
+    const permissionContexts: Hex[] = [permissionContext];
+
     const defaultMode =
       "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
 
-    // Execution calldata: ETH transfer to solver
+    // TODO: executionCallData value should match the delegation's prize amount
     const executionCallData = encodeAbiParameters(
       [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
       [address, BigInt(0), "0x" as Hex]
@@ -156,6 +228,7 @@ export function SubmitGuess() {
     setPassphrase("");
     setErrorMessage("");
     setProofData(null);
+    markSolvedCalled.current = false;
   }, []);
 
   // Determine display state
