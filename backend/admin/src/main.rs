@@ -115,8 +115,11 @@ fn main() {
             db.init().expect("Failed to initialize database");
 
             let solution_hash = sha256_hex(&answer);
+            let next_id = db
+                .next_puzzle_id(environment)
+                .expect("Failed to query next puzzle ID");
             let id = db
-                .create_puzzle(environment, &solution_hash, &clue_uri)
+                .create_puzzle(environment, next_id, &solution_hash, &clue_uri)
                 .expect("Failed to create puzzle");
 
             println!("Created puzzle #{id} ({environment}) (hash: {solution_hash})");

@@ -44,7 +44,7 @@ impl Db {
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS puzzles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY,
                 environment TEXT NOT NULL DEFAULT 'testnet',
                 solution_hash TEXT NOT NULL,
                 clue_uri TEXT NOT NULL DEFAULT '',
@@ -71,13 +71,23 @@ impl Db {
 
     // ── Puzzles ──────────────────────────────────────────────
 
-    /// Insert a new puzzle. Returns the new puzzle ID.
-    pub fn create_puzzle(&self, env: &str, solution_hash: &str, clue_uri: &str) -> Result<i64> {
+    /// Insert a new puzzle with an explicit ID (must match the on-chain puzzleId).
+    pub fn create_puzzle(&self, env: &str, id: i64, solution_hash: &str, clue_uri: &str) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO puzzles (environment, solution_hash, clue_uri) VALUES (?1, ?2, ?3)",
-            params![env, solution_hash, clue_uri],
+            "INSERT INTO puzzles (id, environment, solution_hash, clue_uri) VALUES (?1, ?2, ?3, ?4)",
+            params![id, env, solution_hash, clue_uri],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(id)
+    }
+
+    /// Return the next available puzzle ID for this environment.
+    /// On-chain puzzles are 0-indexed, so this returns max(id)+1 or 0 if none exist.
+    pub fn next_puzzle_id(&self, env: &str) -> Result<i64> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(MAX(id) + 1, 0) FROM puzzles WHERE environment = ?1",
+        )?;
+        let next_id: i64 = stmt.query_row(params![env], |row| row.get(0))?;
+        Ok(next_id)
     }
 
     /// Fetch a single puzzle by ID, scoped to environment, with prize from active delegation.
@@ -223,7 +233,8 @@ mod tests {
     #[test]
     fn test_create_and_get_puzzle() {
         let db = test_db();
-        let id = db.create_puzzle("testnet", "0xabcdef", "ipfs://clue").unwrap();
+        let id = db.create_puzzle("testnet", 0, "0xabcdef", "ipfs://clue").unwrap();
+        assert_eq!(id, 0);
         let puzzle = db.get_puzzle("testnet", id).unwrap().unwrap();
         assert_eq!(puzzle.solution_hash, "0xabcdef");
         assert_eq!(puzzle.clue_uri, "ipfs://clue");
@@ -236,8 +247,8 @@ mod tests {
     #[test]
     fn test_list_puzzles() {
         let db = test_db();
-        db.create_puzzle("testnet", "0x111", "ipfs://1").unwrap();
-        db.create_puzzle("testnet", "0x222", "ipfs://2").unwrap();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1").unwrap();
+        db.create_puzzle("testnet", 1, "0x222", "ipfs://2").unwrap();
         let puzzles = db.list_puzzles("testnet").unwrap();
         assert_eq!(puzzles.len(), 2);
     }
@@ -245,8 +256,8 @@ mod tests {
     #[test]
     fn test_environment_isolation() {
         let db = test_db();
-        db.create_puzzle("testnet", "0x111", "ipfs://1").unwrap();
-        db.create_puzzle("mainnet", "0x222", "ipfs://2").unwrap();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1").unwrap();
+        db.create_puzzle("mainnet", 1, "0x222", "ipfs://2").unwrap();
 
         let testnet_puzzles = db.list_puzzles("testnet").unwrap();
         assert_eq!(testnet_puzzles.len(), 1);
@@ -260,7 +271,7 @@ mod tests {
     #[test]
     fn test_mark_solved() {
         let db = test_db();
-        let id = db.create_puzzle("testnet", "0xaaa", "").unwrap();
+        let id = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
         db.mark_solved("testnet", id, "0xwinner").unwrap();
         let puzzle = db.get_puzzle("testnet", id).unwrap().unwrap();
         assert!(puzzle.solved);
@@ -270,7 +281,7 @@ mod tests {
     #[test]
     fn test_delegation_lifecycle() {
         let db = test_db();
-        let pid = db.create_puzzle("testnet", "0xaaa", "").unwrap();
+        let pid = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
 
         // Add first delegation
         db.add_delegation("testnet", pid, r#"{"v":1}"#, "1.0").unwrap();
@@ -292,12 +303,27 @@ mod tests {
     #[test]
     fn test_delegation_environment_isolation() {
         let db = test_db();
-        let pid = db.create_puzzle("testnet", "0xaaa", "").unwrap();
+        let pid = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
 
         db.add_delegation("testnet", pid, r#"{"v":1}"#, "1.0").unwrap();
 
         // Should not find delegation in mainnet environment
         let d = db.get_active_delegation("mainnet", pid).unwrap();
         assert!(d.is_none());
+    }
+
+    #[test]
+    fn test_next_puzzle_id() {
+        let db = test_db();
+        assert_eq!(db.next_puzzle_id("testnet").unwrap(), 0);
+
+        db.create_puzzle("testnet", 0, "0x111", "").unwrap();
+        assert_eq!(db.next_puzzle_id("testnet").unwrap(), 1);
+
+        db.create_puzzle("testnet", 1, "0x222", "").unwrap();
+        assert_eq!(db.next_puzzle_id("testnet").unwrap(), 2);
+
+        // Different environment starts at 0
+        assert_eq!(db.next_puzzle_id("mainnet").unwrap(), 0);
     }
 }
