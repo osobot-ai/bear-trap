@@ -118,6 +118,4 @@ contract BearTrap is IBearTrap, Ownable {
         emit PuzzleCreated(puzzleId);
     }
 
-    /// @notice Receive ETH (for funding puzzles)
-    receive() external payable {}
 }
