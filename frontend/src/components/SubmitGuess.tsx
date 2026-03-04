@@ -88,20 +88,19 @@ export function SubmitGuess() {
   const markSolvedCalled = useRef(false);
 
   useEffect(() => {
-    if (!isConfirmed || markSolvedCalled.current || !address) return;
+    if (!isConfirmed || markSolvedCalled.current || !redeemHash) return;
     markSolvedCalled.current = true;
 
     fetch(`${BACKEND_URL}/api/mark-solved`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        puzzleId: parseInt(puzzleId),
-        winner: address,
+        txHash: redeemHash,
       }),
     }).catch((err) => {
       console.warn("Failed to call mark-solved (prize was still claimed):", err);
     });
-  }, [isConfirmed, puzzleId, address]);
+  }, [isConfirmed, redeemHash]);
 
   const count = puzzleCount ? Number(puzzleCount) : 0;
   const tickets = ticketBalance ? Number(ticketBalance) : 0;

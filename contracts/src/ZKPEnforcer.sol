@@ -31,7 +31,7 @@ import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 contract ZKPEnforcer is CaveatEnforcer {
     IRiscZeroVerifier public immutable verifier;
 
-    event ProofVerified(address indexed redeemer, bytes32 indexed solutionHash, bytes32 indexed imageId);
+    event ProofVerified(address indexed redeemer, bytes32 indexed solutionHash, bytes32 indexed imageId, uint256 puzzleId);
 
     error SolverAddressMismatch();
     error PuzzleIdMismatch();
@@ -69,6 +69,6 @@ contract ZKPEnforcer is CaveatEnforcer {
             revert PuzzleIdMismatch();
         }
 
-        emit ProofVerified(_redeemer, solutionHash, imageId);
+        emit ProofVerified(_redeemer, solutionHash, imageId, journalPuzzleId);
     }
 }

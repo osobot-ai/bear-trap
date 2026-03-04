@@ -47,6 +47,11 @@ sol! {
     }
 }
 
+// ZKPEnforcer ProofVerified event for tx receipt log parsing.
+sol! {
+    event ProofVerified(address indexed redeemer, bytes32 indexed solutionHash, bytes32 indexed imageId, uint256 puzzleId);
+}
+
 // ── Application State ────────────────────────────────────────
 
 struct AppState {
@@ -56,7 +61,9 @@ struct AppState {
     operator_signer: PrivateKeySigner,
     rpc_url: String,
     bear_trap_address: String,
+    zkp_enforcer_address: Address,
     rate_limiter: tokio::sync::Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    mark_solved_last_call: tokio::sync::Mutex<Option<Instant>>,
 }
 
 const RATE_LIMIT_MAX_REQUESTS: usize = 5;
@@ -105,8 +112,7 @@ struct ProveSuccessResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MarkSolvedRequest {
-    puzzle_id: i64,
-    winner: String,
+    tx_hash: String,
 }
 
 // ── Handlers ────────────────────────────────────────────────
@@ -569,28 +575,32 @@ async fn mark_solved(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MarkSolvedRequest>,
 ) -> impl IntoResponse {
-    let winner_addr: Address = match req.winner.parse() {
-        Ok(a) => a,
+    // Global rate limit: 1 request per 60 seconds from any caller
+    {
+        let mut last_call = state.mark_solved_last_call.lock().await;
+        let now = Instant::now();
+        if let Some(prev) = *last_call {
+            if now.duration_since(prev) < std::time::Duration::from_secs(60) {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(ErrorResponse {
+                        error: "Rate limited. Try again in 1 minute.".into(),
+                        ticket_burned: None,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+        *last_call = Some(now);
+    }
+
+    let tx_hash: alloy::primitives::B256 = match req.tx_hash.parse() {
+        Ok(h) => h,
         Err(_) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
-                    error: "Invalid winner address".into(),
-                    ticket_burned: None,
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let bear_trap_addr: Address = match state.bear_trap_address.parse() {
-        Ok(a) => a,
-        Err(_) => {
-            tracing::error!("Invalid BEAR_TRAP_ADDRESS: {}", state.bear_trap_address);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Server misconfiguration: invalid contract address".into(),
+                    error: "Invalid or missing txHash".into(),
                     ticket_burned: None,
                 }),
             )
@@ -612,27 +622,179 @@ async fn mark_solved(
         }
     };
 
+    let read_provider = ProviderBuilder::new().connect_http(rpc_url.clone());
+
+    use alloy::providers::Provider;
+    let receipt = match read_provider.get_transaction_receipt(tx_hash).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Transaction not found or not yet confirmed".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch tx receipt: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to fetch transaction receipt".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Find the ProofVerified event emitted by the ZKPEnforcer contract
+    use alloy_sol_types::SolEvent;
+    let enforcer_addr = state.zkp_enforcer_address;
+
+    let proof_log = receipt.inner.logs().iter().find(|log| {
+        log.address() == enforcer_addr
+            && log.data().topics().first() == Some(&ProofVerified::SIGNATURE_HASH)
+            && log.data().topics().len() == 4
+    });
+
+    let log = match proof_log {
+        Some(l) => l,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "No ProofVerified event found in transaction receipt".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Indexed: topic1=redeemer, topic2=solutionHash, topic3=imageId
+    // Non-indexed: puzzleId in log.data
+    let redeemer = Address::from_word(log.data().topics()[1]);
+    let solution_hash_bytes = log.data().topics()[2];
+
+    let decoded = match ProofVerified::decode_log_data(log.data()) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Failed to decode ProofVerified log data: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to decode event data".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+    let puzzle_id = decoded.puzzleId;
+    let puzzle_id_i64 = puzzle_id.to::<u64>() as i64;
+
+    // Look up puzzle in DB and verify solutionHash matches
+    let env = state.environment.clone();
+    let db_result = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            db.get_puzzle(&env, puzzle_id_i64)
+        })
+        .await
+        .expect("spawn_blocking panicked")
+    };
+
+    let puzzle = match db_result {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("No puzzle found with id {puzzle_id_i64}"),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("DB error reading puzzle: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to read puzzle from database".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Verify solutionHash from the event matches the DB
+    let db_hash_clean = puzzle.solution_hash.strip_prefix("0x").unwrap_or(&puzzle.solution_hash);
+    let event_hash_hex = hex::encode(solution_hash_bytes.as_slice());
+    if db_hash_clean != event_hash_hex {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "solutionHash in event does not match any puzzle".into(),
+                ticket_burned: None,
+            }),
+        )
+            .into_response();
+    }
+
+    if puzzle.solved {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Puzzle already solved".into(),
+                ticket_burned: None,
+            }),
+        )
+            .into_response();
+    }
+
+    // Call BearTrap.markSolved(puzzleId, redeemer) on-chain
+    let bear_trap_addr: Address = match state.bear_trap_address.parse() {
+        Ok(a) => a,
+        Err(_) => {
+            tracing::error!("Invalid BEAR_TRAP_ADDRESS: {}", state.bear_trap_address);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Server misconfiguration: invalid contract address".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
     let wallet = EthereumWallet::from(state.operator_signer.clone());
-    let provider = ProviderBuilder::new()
+    let write_provider = ProviderBuilder::new()
         .wallet(wallet)
         .connect_http(rpc_url);
 
-    let contract = BearTrap::new(bear_trap_addr, provider);
-    let puzzle_id_u256 = alloy::primitives::U256::from(req.puzzle_id as u64);
+    let contract = BearTrap::new(bear_trap_addr, write_provider);
+    let winner_str = format!("{:?}", redeemer);
 
     tracing::info!(
         "Calling markSolved for puzzle {} winner {}",
-        req.puzzle_id,
-        req.winner
+        puzzle_id_i64,
+        winner_str
     );
 
-    match contract.markSolved(puzzle_id_u256, winner_addr).send().await {
+    match contract.markSolved(puzzle_id, redeemer).send().await {
         Ok(tx) => match tx.get_receipt().await {
-            Ok(receipt) => {
+            Ok(mark_receipt) => {
                 tracing::info!(
                     "markSolved confirmed in block {:?}, tx: {}",
-                    receipt.block_number,
-                    receipt.transaction_hash,
+                    mark_receipt.block_number,
+                    mark_receipt.transaction_hash,
                 );
             }
             Err(e) => {
@@ -652,7 +814,7 @@ async fn mark_solved(
             tracing::error!("markSolved reverted: {err_string}");
 
             let user_error = if err_string.contains("AlreadySolved") {
-                "Puzzle already marked as solved."
+                "Puzzle already marked as solved on-chain."
             } else if err_string.contains("InvalidPuzzleId") {
                 "Invalid puzzle ID."
             } else {
@@ -660,7 +822,7 @@ async fn mark_solved(
             };
 
             return (
-                StatusCode::BAD_REQUEST,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: user_error.into(),
                     ticket_burned: None,
@@ -672,12 +834,11 @@ async fn mark_solved(
 
     {
         let env = state.environment.clone();
-        let puzzle_id = req.puzzle_id;
-        let winner = req.winner.clone();
+        let winner = winner_str.clone();
         let state = Arc::clone(&state);
         let _ = tokio::task::spawn_blocking(move || {
             let db = state.db.lock().expect("db mutex poisoned");
-            if let Err(e) = db.mark_solved(&env, puzzle_id, &winner) {
+            if let Err(e) = db.mark_solved(&env, puzzle_id_i64, &winner) {
                 tracing::error!("Failed to mark puzzle solved in DB: {e}");
             }
         })
@@ -686,7 +847,7 @@ async fn mark_solved(
 
     (
         StatusCode::OK,
-        Json(serde_json::json!({"status": "solved", "puzzleId": req.puzzle_id, "winner": req.winner})),
+        Json(serde_json::json!({"status": "solved", "puzzleId": puzzle_id_i64, "winner": winner_str})),
     )
         .into_response()
 }
@@ -714,6 +875,13 @@ async fn main() -> anyhow::Result<()> {
     let boundless_private_key = env::var("BOUNDLESS_PRIVATE_KEY").unwrap_or_default();
     let pinata_jwt = env::var("PINATA_JWT").ok();
     let bear_trap_address = env::var("BEAR_TRAP_ADDRESS").unwrap_or_default();
+    let zkp_enforcer_address: Address = env::var("ZKP_ENFORCER_ADDRESS")
+        .unwrap_or_default()
+        .parse()
+        .unwrap_or_else(|_| {
+            tracing::warn!("ZKP_ENFORCER_ADDRESS not set or invalid — mark-solved endpoint will fail");
+            Address::ZERO
+        });
     let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "testnet".into());
 
     // Ensure data directory exists
@@ -751,7 +919,9 @@ async fn main() -> anyhow::Result<()> {
         operator_signer,
         rpc_url,
         bear_trap_address,
+        zkp_enforcer_address,
         rate_limiter: tokio::sync::Mutex::new(HashMap::new()),
+        mark_solved_last_call: tokio::sync::Mutex::new(None),
     });
 
     let cors = if frontend_url == "*" {
