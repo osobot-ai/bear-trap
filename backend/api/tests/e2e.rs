@@ -4,8 +4,15 @@
 //! On-chain tests (useTicket, redeemDelegations) require a running Base Sepolia node
 //! and are gated behind the `onchain` feature.
 
+use alloy::signers::local::PrivateKeySigner;
 use prover::generate_mock_proof;
 use shared::Db;
+
+fn test_operator_signer() -> PrivateKeySigner {
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse()
+        .unwrap()
+}
 
 // ── Database Integration Tests ──────────────────────────────
 
@@ -113,14 +120,14 @@ async fn e2e_mock_proof_correct_answer() {
     let expected_hash = format!("0x{}", hex::encode(hasher.finalize()));
     let solver = "0x000000000000000000000000000000000000bEEF";
 
-    let result = generate_mock_proof(answer, solver, &expected_hash)
+    let result = generate_mock_proof(answer, solver, &expected_hash, 0, &test_operator_signer())
         .await
         .unwrap();
 
     // Verify proof structure
     assert_eq!(result.seal.len(), 32, "Mock seal should be 32 zero bytes");
     assert!(result.seal.iter().all(|&b| b == 0), "Mock seal should be all zeros");
-    assert_eq!(result.journal.len(), 64, "Journal should be 64 bytes (address + bytes32)");
+    assert_eq!(result.journal.len(), 96, "Journal should be 96 bytes (address + bytes32 + uint256)");
 
     // Verify journal encodes solver address correctly
     // Address is left-padded to 32 bytes, so 0xbEEF should be at bytes 30-31
@@ -144,7 +151,7 @@ async fn e2e_mock_proof_wrong_answer() {
     let wrong_answer = "not the right answer";
     let solver = "0x000000000000000000000000000000000000bEEF";
 
-    let result = generate_mock_proof(wrong_answer, solver, &expected_hash).await;
+    let result = generate_mock_proof(wrong_answer, solver, &expected_hash, 0, &test_operator_signer()).await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -158,7 +165,7 @@ async fn e2e_mock_proof_empty_guess() {
     let solver = "0x000000000000000000000000000000000000bEEF";
     let hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    let result = generate_mock_proof("", solver, hash).await;
+    let result = generate_mock_proof("", solver, hash, 0, &test_operator_signer()).await;
     assert!(result.is_err(), "Empty guess should fail hash check");
 }
 
@@ -202,12 +209,12 @@ async fn e2e_full_testnet_flow() {
 
     // 4. Generate mock proof (simulating correct guess)
     let solver_address = "0x000000000000000000000000000000000000bEEF";
-    let result = generate_mock_proof(answer, solver_address, &format!("0x{}", solution_hash))
+    let result = generate_mock_proof(answer, solver_address, &format!("0x{}", solution_hash), 0, &test_operator_signer())
         .await
         .unwrap();
 
     assert_eq!(result.seal.len(), 32);
-    assert_eq!(result.journal.len(), 64);
+    assert_eq!(result.journal.len(), 96);
 
     // 5. Mark puzzle as solved
     db.mark_solved("testnet", puzzle_id, solver_address).unwrap();
@@ -251,10 +258,10 @@ async fn e2e_multiple_puzzles_independent() {
 
     // Solve puzzle 1 only
     let solver = "0x000000000000000000000000000000000000bEEF";
-    let proof1 = generate_mock_proof(answer1, solver, &format!("0x{}", hash1))
+    let proof1 = generate_mock_proof(answer1, solver, &format!("0x{}", hash1), 0, &test_operator_signer())
         .await
         .unwrap();
-    assert_eq!(proof1.journal.len(), 64);
+    assert_eq!(proof1.journal.len(), 96);
     db.mark_solved("testnet", id1, solver).unwrap();
 
     // Puzzle 1 solved, puzzle 2 still open
@@ -262,7 +269,7 @@ async fn e2e_multiple_puzzles_independent() {
     assert!(!db.get_puzzle("testnet", id2).unwrap().unwrap().solved);
 
     // Wrong answer for puzzle 2
-    let wrong = generate_mock_proof("wrong answer", solver, &format!("0x{}", hash2)).await;
+    let wrong = generate_mock_proof("wrong answer", solver, &format!("0x{}", hash2), 1, &test_operator_signer()).await;
     assert!(wrong.is_err());
 }
 
@@ -277,7 +284,7 @@ async fn e2e_mock_proof_invalid_solver_address() {
     hasher.update(answer.as_bytes());
     let hash = format!("0x{}", hex::encode(hasher.finalize()));
 
-    let result = generate_mock_proof(answer, "not-a-hex-address", &hash).await;
+    let result = generate_mock_proof(answer, "not-a-hex-address", &hash, 0, &test_operator_signer()).await;
     assert!(result.is_err(), "Non-hex solver address should fail");
 }
 
@@ -290,7 +297,7 @@ async fn e2e_mock_proof_empty_solver_address() {
     hasher.update(answer.as_bytes());
     let hash = format!("0x{}", hex::encode(hasher.finalize()));
 
-    let result = generate_mock_proof(answer, "", &hash).await;
+    let result = generate_mock_proof(answer, "", &hash, 0, &test_operator_signer()).await;
     assert!(result.is_err());
 }
 
@@ -298,7 +305,7 @@ async fn e2e_mock_proof_empty_solver_address() {
 async fn e2e_mock_proof_invalid_solution_hash_length() {
     let solver = "0x000000000000000000000000000000000000bEEF";
 
-    let result = generate_mock_proof("anything", solver, "0xabcd").await;
+    let result = generate_mock_proof("anything", solver, "0xabcd", 0, &test_operator_signer()).await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -312,7 +319,7 @@ async fn e2e_mock_proof_invalid_solution_hash_not_hex() {
     let solver = "0x000000000000000000000000000000000000bEEF";
 
     let result =
-        generate_mock_proof("anything", solver, "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ").await;
+        generate_mock_proof("anything", solver, "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ", 0, &test_operator_signer()).await;
     assert!(result.is_err());
 }
 
@@ -326,6 +333,6 @@ async fn e2e_mock_proof_solution_hash_without_0x_prefix() {
     let hash_no_prefix = hex::encode(hasher.finalize());
     let solver = "0x000000000000000000000000000000000000bEEF";
 
-    let result = generate_mock_proof(answer, solver, &hash_no_prefix).await;
+    let result = generate_mock_proof(answer, solver, &hash_no_prefix, 0, &test_operator_signer()).await;
     assert!(result.is_ok(), "Hash without 0x prefix should still work");
 }
