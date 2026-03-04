@@ -187,11 +187,6 @@ pub async fn generate_proof(
 
     let rpc_url: url::Url = config.rpc_url.parse()?;
 
-    // Configure Pinata if available
-    if let Some(ref jwt) = config.pinata_jwt {
-        std::env::set_var("PINATA_JWT", jwt);
-    }
-
     let client = Client::builder()
         .with_rpc_url(rpc_url)
         .with_private_key_str(&config.private_key)?

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import {
   useAccount,
   useReadContract,
+  useSignMessage,
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
@@ -48,6 +49,7 @@ interface ProveResult {
 
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const [puzzleId, setPuzzleId] = useState("0");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
@@ -114,6 +116,9 @@ export function SubmitGuess() {
     setProofData(null);
 
     try {
+      const message = `Bear Trap: solve puzzle ${parseInt(puzzleId)}`;
+      const signature = await signMessageAsync({ message });
+
       const response = await fetch(`${BACKEND_URL}/api/prove`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -121,6 +126,7 @@ export function SubmitGuess() {
           passphrase: passphrase.trim(),
           solverAddress: address,
           puzzleId: parseInt(puzzleId),
+          signature,
         }),
       });
 

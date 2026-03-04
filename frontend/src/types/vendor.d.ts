@@ -93,6 +93,14 @@ declare module "wagmi" {
     isSuccess: boolean;
   };
 
+  export function useSignMessage(): {
+    signMessage: (config: { message: string }) => void;
+    signMessageAsync: (config: { message: string }) => Promise<`0x${string}`>;
+    data: `0x${string}` | undefined;
+    isPending: boolean;
+    error: Error | null;
+  };
+
   export function usePublicClient(config?: {
     chainId?: number;
   }): {

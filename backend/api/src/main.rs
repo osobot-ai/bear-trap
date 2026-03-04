@@ -22,7 +22,7 @@ use alloy::{
 };
 use axum::{
     extract::{ConnectInfo, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -71,6 +71,7 @@ struct ProveRequest {
     passphrase: String,
     solver_address: String,
     puzzle_id: i64,
+    signature: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -192,14 +193,30 @@ async fn get_puzzle(
 /// 6. Return proof data or error
 async fn prove(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
     Json(req): Json<ProveRequest>,
 ) -> impl IntoResponse {
+    // Extract real client IP from proxy headers, falling back to socket address.
+    // X-Forwarded-For is a comma-separated list; the leftmost IP is the original client.
+    let client_ip: IpAddr = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .and_then(|s| s.trim().parse::<IpAddr>().ok())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<IpAddr>().ok())
+        })
+        .unwrap_or_else(|| addr.ip());
+
     {
         let mut limiter = state.rate_limiter.lock().await;
         let now = Instant::now();
         let window = std::time::Duration::from_secs(RATE_LIMIT_WINDOW_SECS);
-        let timestamps = limiter.entry(addr.ip()).or_default();
+        let timestamps = limiter.entry(client_ip).or_default();
         timestamps.retain(|t| now.duration_since(*t) < window);
         if timestamps.len() >= RATE_LIMIT_MAX_REQUESTS {
             return (
@@ -234,6 +251,66 @@ async fn prove(
             }),
         )
             .into_response();
+    }
+
+    // Verify EIP-191 signature proves caller owns solver_address (prevents ticket griefing)
+    {
+        let message = format!("Bear Trap: solve puzzle {}", req.puzzle_id);
+        let prefixed = format!("\x19Ethereum Signed Message:\n{}{}", message.len(), message);
+        let hash = alloy::primitives::keccak256(prefixed.as_bytes());
+
+        let sig: alloy::signers::Signature = match req.signature.parse() {
+            Ok(s) => s,
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "Invalid signature format".into(),
+                        ticket_burned: None,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let recovered = match sig.recover_address_from_prehash(&hash) {
+            Ok(addr) => addr,
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "Signature recovery failed".into(),
+                        ticket_burned: None,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let expected_addr: Address = match req.solver_address.parse() {
+            Ok(a) => a,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "Invalid solver address".into(),
+                        ticket_burned: None,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        if recovered != expected_addr {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Signature does not match solver address".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
     }
 
     // Step 1 & 2: Read puzzle and delegation from DB (hold lock briefly)
@@ -654,8 +731,8 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: Mutex::new(HashMap::new()),
     });
 
-    // Configure CORS
     let cors = if frontend_url == "*" {
+        tracing::warn!("⚠️  CORS is set to wildcard (*). Set FRONTEND_URL for production.");
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
