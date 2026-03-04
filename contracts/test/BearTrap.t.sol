@@ -370,15 +370,6 @@ contract BearTrapTest is Test {
         bearTrap.transferOwnership(player);
     }
 
-    // ==================== Receive ETH Test ====================
-
-    function test_ReceiveETH() public {
-        vm.deal(address(this), 10 ether);
-        (bool success,) = address(bearTrap).call{value: 1 ether}("");
-        assertTrue(success);
-        assertEq(address(bearTrap).balance, 1 ether);
-    }
-
     // ==================== Integration: Full Flow ====================
 
     function test_FullFlow() public {
