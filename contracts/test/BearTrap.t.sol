@@ -279,18 +279,13 @@ contract BearTrapTest is Test {
     function test_ZKPEnforcerValid() public {
         bytes32 solutionHash = sha256("correct answer");
         bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
 
-        // Encode terms (delegator-set): just imageId
-        bytes memory terms = abi.encode(imageId);
-
-        // Encode journal (guest output): (address solver, bytes32 hash)
-        bytes memory journal = abi.encode(player, solutionHash);
-
-        // Encode args (redeemer-set)
-        bytes memory seal = hex"deadbeef"; // Mock seal — verifier will accept anything
+        bytes memory terms = abi.encode(imageId, puzzleId);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId);
+        bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
-        // Call beforeHook — should succeed
         mockVerifier.setShouldVerify(true);
         zkpEnforcer.beforeHook(
             terms,
@@ -299,20 +294,20 @@ contract BearTrapTest is Test {
             "",
             bytes32(0),
             address(0),
-            player // redeemer
+            player
         );
     }
 
     function test_ZKPEnforcerInvalidProof() public {
         bytes32 solutionHash = sha256("correct answer");
         bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
 
-        bytes memory terms = abi.encode(imageId);
-        bytes memory journal = abi.encode(player, solutionHash);
+        bytes memory terms = abi.encode(imageId, puzzleId);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId);
         bytes memory seal = hex"baadbeef";
         bytes memory args = abi.encode(seal, journal);
 
-        // Set verifier to reject
         mockVerifier.setShouldVerify(false);
 
         vm.expectRevert(abi.encodeWithSignature("VerificationFailed()"));
@@ -330,12 +325,12 @@ contract BearTrapTest is Test {
     function test_ZKPEnforcerWrongRedeemer() public {
         bytes32 solutionHash = sha256("correct answer");
         bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
 
-        bytes memory terms = abi.encode(imageId);
+        bytes memory terms = abi.encode(imageId, puzzleId);
 
-        // Journal has different solver address
         address wrongSolver = address(0xDEAD);
-        bytes memory journal = abi.encode(wrongSolver, solutionHash);
+        bytes memory journal = abi.encode(wrongSolver, solutionHash, puzzleId);
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -349,7 +344,32 @@ contract BearTrapTest is Test {
             "",
             bytes32(0),
             address(0),
-            player // redeemer doesn't match journal
+            player
+        );
+    }
+
+    function test_ZKPEnforcerWrongPuzzleId() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 termsPuzzleId = 0;
+        uint256 journalPuzzleId = 999;
+
+        bytes memory terms = abi.encode(imageId, termsPuzzleId);
+        bytes memory journal = abi.encode(player, solutionHash, journalPuzzleId);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        vm.expectRevert(ZKPEnforcer.PuzzleIdMismatch.selector);
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(bytes32(0)),
+            "",
+            bytes32(0),
+            address(0),
+            player
         );
     }
 

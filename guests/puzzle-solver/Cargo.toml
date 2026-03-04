@@ -6,8 +6,9 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-alloy-primitives = { version = "1.0", default-features = false, features = ["rlp", "serde", "std"] }
+alloy-primitives = { version = "1.0", default-features = false, features = ["rlp", "serde", "std", "k256"] }
 alloy-sol-types = { version = "1.0" }
+k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 risc0-zkvm = { version = "3.0", default-features = false, features = ["std"] }
 sha2 = { version = "0.10" }
 

@@ -3823,6 +3823,7 @@ dependencies = [
 name = "prover"
 version = "0.1.0"
 dependencies = [
+ "alloy",
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",

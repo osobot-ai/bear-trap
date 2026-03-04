@@ -491,13 +491,14 @@ async fn prove(
         receipt.transaction_hash,
     );
 
-    // Step 4: Generate ZK proof (mock or real depending on environment)
     let proof_result = if state.environment == "testnet" {
         tracing::info!("Using mock proving (testnet mode)");
         prover::generate_mock_proof(
             &req.passphrase,
             &req.solver_address,
             &puzzle.solution_hash,
+            req.puzzle_id as u64,
+            &state.operator_signer,
         )
         .await
     } else {
@@ -506,6 +507,8 @@ async fn prove(
             &req.passphrase,
             &req.solver_address,
             &puzzle.solution_hash,
+            req.puzzle_id as u64,
+            &state.operator_signer,
         )
         .await
     };
