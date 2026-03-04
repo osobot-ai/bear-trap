@@ -20,8 +20,10 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = { workspace = true }
+url = { workspace = true }
 
-# TODO: Uncomment when implementing on-chain useTicket calls:
-# alloy = { workspace = true, features = ["sol-types", "signers", "signer-local"] }
-# alloy-primitives = { workspace = true }
-# alloy-sol-types = { workspace = true }
+alloy = { workspace = true, features = ["sol-types", "signers", "signer-local", "provider-http", "network", "contract"] }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+
+# Vendored OpenSSL to avoid needing system libssl-dev

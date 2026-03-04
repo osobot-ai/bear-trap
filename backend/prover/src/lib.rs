@@ -1,22 +1,13 @@
 //! Bear Trap Prover — Boundless proof generation library.
 //!
 //! This crate wraps the Boundless SDK to generate RISC0 ZK proofs for puzzle guesses.
-//! It is the library equivalent of the old `apps/src/main.rs` CLI tool.
-//!
-//! # TODO: Boundless SDK Integration
-//!
-//! The Boundless SDK (`boundless-market` crate) and RISC0 dependencies require
-//! specific setup that may involve git dependencies from the Boundless repo.
-//! Once those are resolved, this module should:
-//!
-//! 1. Import the guest ELF via `guests::PUZZLE_SOLVER_ELF`
-//! 2. ABI-encode `PuzzleInput { guess, solverAddress, expectedHash }`
-//! 3. Build a Boundless `Client` with the configured RPC + private key
-//! 4. Submit a proof request and wait for fulfillment
-//! 5. Return the seal + journal as `ProofResult`
+//! It supports two modes:
+//! - **Testnet (mock):** Returns mock proofs accepted by MockRiscZeroVerifier
+//! - **Mainnet (real):** Submits to Boundless Market (offchain-first, falls back to onchain)
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Configuration for the Boundless prover.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +43,6 @@ pub async fn generate_mock_proof(
     solver_address: &str,
     expected_hash: &str,
 ) -> Result<ProofResult> {
-    // Quick local check: hash the guess and compare to expected hash.
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(guess.as_bytes());
@@ -63,12 +53,10 @@ pub async fn generate_mock_proof(
         anyhow::bail!("Wrong guess. Your ticket has been consumed.");
     }
 
-    // ABI-encode journal: (address solverAddress, bytes32 solutionHash)
-    // address is left-padded to 32 bytes, bytes32 is already 32 bytes
     let journal = encode_journal(solver_address, expected_hash)?;
 
     Ok(ProofResult {
-        seal: vec![0u8; 32], // mock seal — MockRiscZeroVerifier accepts anything
+        seal: vec![0u8; 32],
         journal,
         solver_address: solver_address.to_string(),
         solution_hash: expected_hash.to_string(),
@@ -82,52 +70,51 @@ fn encode_journal(solver_address: &str, solution_hash: &str) -> Result<Vec<u8>> 
 
     let addr_bytes = hex::decode(addr_clean)?;
     if addr_bytes.len() != 20 {
-        anyhow::bail!("Invalid solver address length: expected 20 bytes, got {}", addr_bytes.len());
+        anyhow::bail!(
+            "Invalid solver address length: expected 20 bytes, got {}",
+            addr_bytes.len()
+        );
     }
 
     let hash_bytes = hex::decode(hash_clean)?;
     if hash_bytes.len() != 32 {
-        anyhow::bail!("Invalid solution hash length: expected 32 bytes, got {}", hash_bytes.len());
+        anyhow::bail!(
+            "Invalid solution hash length: expected 32 bytes, got {}",
+            hash_bytes.len()
+        );
     }
 
-    // ABI encoding: address is left-padded to 32 bytes, bytes32 is 32 bytes
     let mut encoded = Vec::with_capacity(64);
-
-    // Pad address to 32 bytes (left-padded with zeros)
     let mut addr_padded = [0u8; 32];
     addr_padded[12..32].copy_from_slice(&addr_bytes);
     encoded.extend_from_slice(&addr_padded);
-
-    // bytes32 is already 32 bytes
     encoded.extend_from_slice(&hash_bytes);
 
     Ok(encoded)
 }
 
-/// Generate a ZK proof that `guess` hashes to `expected_hash`.
+/// Generate a real ZK proof via Boundless Market.
 ///
-/// # TODO: Implement with Boundless SDK
+/// Uses offchain-first submission (falls back to onchain if needed).
 ///
-/// This function currently returns a stub error. Once the Boundless SDK
-/// dependencies are resolved, implement the following flow:
-///
-/// 1. Compute SHA-256 of `guess` and verify it matches `expected_hash`
-///    (fail fast before submitting to Boundless if obviously wrong)
-/// 2. ABI-encode the input: `PuzzleInput { guess, solverAddress, expectedHash }`
-/// 3. Build a `boundless_market::client::Client` from the config
-/// 4. Create a proof request with `PUZZLE_SOLVER_ELF` and the encoded input
-/// 5. Submit on-chain and wait for fulfillment
-/// 6. Construct and return `ProofResult` with the seal + journal
-///
-/// See `apps/src/main.rs` (now deleted) for the original implementation.
+/// Flow:
+/// 1. Verify the guess hash matches expected (fail fast)
+/// 2. ABI-encode guest input: PuzzleInput { guess, solverAddress, expectedHash }
+/// 3. Build Boundless Client
+/// 4. Upload guest ELF and submit proof request
+/// 5. Wait for fulfillment
+/// 6. Return seal + journal
 pub async fn generate_proof(
-    _config: &ProverConfig,
+    config: &ProverConfig,
     guess: &str,
-    _solver_address: &str,
+    solver_address: &str,
     expected_hash: &str,
 ) -> Result<ProofResult> {
-    // Quick local check: hash the guess and compare to expected hash.
-    // This lets us fail fast without hitting Boundless if the guess is obviously wrong.
+    use alloy_primitives::{Address, FixedBytes};
+    use alloy_sol_types::{sol, SolValue};
+    use boundless_market::client::Client;
+
+    // Quick local check first
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(guess.as_bytes());
@@ -138,51 +125,83 @@ pub async fn generate_proof(
         anyhow::bail!("Wrong guess. Your ticket has been consumed.");
     }
 
-    // TODO: Implement actual Boundless proof generation.
-    // For now, return a placeholder that indicates the architecture is correct
-    // but the prover integration is pending.
-    //
-    // When implementing:
-    // ```rust
-    // use boundless_market::client::Client;
-    // use guests::PUZZLE_SOLVER_ELF;
-    // use alloy::signers::local::PrivateKeySigner;
-    // use alloy_sol_types::SolValue;
-    //
-    // let client = Client::builder()
-    //     .with_rpc_url(config.rpc_url.parse()?)
-    //     .with_private_key(config.private_key.parse::<PrivateKeySigner>()?)
-    //     .build()
-    //     .await?;
-    //
-    // let input = PuzzleInput {
-    //     guess: guess.to_string(),
-    //     solverAddress: solver_address.parse()?,
-    //     expectedHash: expected_hash.parse()?,
-    // };
-    //
-    // let request = client.new_request()
-    //     .with_program(PUZZLE_SOLVER_ELF)
-    //     .with_stdin(input.abi_encode());
-    //
-    // let (request_id, expires_at) = client.submit_onchain(request).await?;
-    // let fulfillment = client
-    //     .wait_for_request_fulfillment(request_id, Duration::from_secs(10), expires_at)
-    //     .await?;
-    //
-    // Ok(ProofResult {
-    //     seal: fulfillment.seal,
-    //     journal: PuzzleOutput { solverAddress, solutionHash }.abi_encode(),
-    //     solver_address: solver_address.to_string(),
-    //     solution_hash: expected_hash.to_string(),
-    // })
-    // ```
+    // Define the same sol types as the guest program
+    sol! {
+        struct PuzzleInput {
+            string guess;
+            address solverAddress;
+            bytes32 expectedHash;
+        }
+    }
 
-    anyhow::bail!(
-        "Boundless SDK integration is not yet implemented. \
-         The guess hash matches, but proof generation requires the boundless-market crate. \
-         See prover/src/lib.rs for implementation notes."
+    // ABI-encode the input for the guest program
+    let solver_addr: Address = solver_address.parse()?;
+    let expected_hash_bytes: FixedBytes<32> = expected_hash.parse()?;
+
+    let input = PuzzleInput {
+        guess: guess.to_string(),
+        solverAddress: solver_addr,
+        expectedHash: expected_hash_bytes,
+    };
+    let encoded_input = input.abi_encode();
+
+    // Load the guest ELF binary
+    let guest_elf = std::fs::read(
+        "guests/puzzle-solver/target/riscv-guest/riscv32im-risc0-zkvm-elf/release/puzzle-solver",
+    )
+    .or_else(|_| std::fs::read("/app/puzzle-solver.elf"))
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to read guest ELF binary. Ensure the guest is built. Error: {e}"
+        )
+    })?;
+
+    let rpc_url: url::Url = config.rpc_url.parse()?;
+
+    // Configure Pinata if available
+    if let Some(ref jwt) = config.pinata_jwt {
+        std::env::set_var("PINATA_JWT", jwt);
+    }
+
+    let client = Client::builder()
+        .with_rpc_url(rpc_url)
+        .with_private_key_str(&config.private_key)?
+        .build()
+        .await?;
+
+    tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
+
+    // client.submit() tries offchain first, falls back to onchain
+    let request = client
+        .new_request()
+        .with_program(guest_elf)
+        .with_stdin(encoded_input);
+
+    let (request_id, expires_at) = client.submit(request).await?;
+
+    tracing::info!(
+        "Proof request submitted: id={:x}, expires_at={}",
+        request_id,
+        expires_at
     );
+
+    // Wait for the proof to be generated
+    let fulfillment = client
+        .wait_for_request_fulfillment(request_id, Duration::from_secs(10), expires_at)
+        .await?;
+
+    tracing::info!("Proof request {:x} fulfilled!", request_id);
+
+    let fulfillment_data = fulfillment.data().map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
+    let seal = fulfillment.seal.to_vec();
+    let journal = fulfillment_data.journal().ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?.to_vec();
+
+    Ok(ProofResult {
+        seal,
+        journal,
+        solver_address: solver_address.to_string(),
+        solution_hash: expected_hash.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -195,7 +214,6 @@ mod tests {
         let hash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
         let journal = encode_journal(addr, hash).unwrap();
         assert_eq!(journal.len(), 64);
-        // Address should be in last 20 bytes of first 32-byte word
         assert_eq!(journal[30], 0xbe);
         assert_eq!(journal[31], 0xef);
     }

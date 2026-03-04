@@ -41,13 +41,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Error handling
 anyhow = "1.0"
+url = "2"
 
 # Boundless / RISC0 (prover crate)
-# NOTE: These may require git deps from the boundless repo.
-# If crates.io versions are not available, see TODO comments in prover/src/lib.rs.
-# boundless-market = { version = "1.0" }
-# risc0-zkvm = { version = "3.0.3", default-features = false }
+boundless-market = { version = "1.3", default-features = false }
+risc0-zkvm = { version = "3.0", default-features = false }
 
 [profile.release]
 debug = 1
 lto = "thin"
+
+# Use vendored OpenSSL to avoid system dependency
+
+
+# Vendored OpenSSL — avoid system libssl-dev dependency
+[workspace.dependencies.openssl-sys]
+version = "0.9"
+features = ["vendored"]

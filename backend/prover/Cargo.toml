@@ -10,16 +10,19 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
 
-# TODO: Boundless SDK and RISC0 dependencies.
-# These require git deps from the boundless repo and may need special setup.
-# Uncomment and configure once Boundless SDK crate is available:
-#
-# boundless-market = { version = "1.0" }
-# risc0-zkvm = { version = "3.0.3", default-features = true }
-# alloy = { workspace = true, features = ["sol-types", "signers", "signer-local"] }
-# alloy-primitives = { workspace = true }
-# alloy-sol-types = { workspace = true }
-#
-# The guest ELF would be imported via:
-# guests = { path = "../../guests" }
+# Boundless SDK and RISC0
+boundless-market = { version = "1.3", default-features = false }
+risc0-zkvm = { version = "3.0", default-features = false, features = ["std"] }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+
+# Vendored OpenSSL to avoid needing system libssl-dev
+
+# Vendored OpenSSL for transitive deps (tokio-tungstenite → native-tls)
+openssl-sys = { workspace = true }

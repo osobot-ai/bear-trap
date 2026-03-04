@@ -7,6 +7,13 @@
 
 use std::{env, net::SocketAddr, sync::Arc};
 
+use alloy::{
+    network::EthereumWallet,
+    primitives::Address,
+    providers::ProviderBuilder,
+    signers::local::PrivateKeySigner,
+    sol,
+};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -22,17 +29,26 @@ use tracing_subscriber::EnvFilter;
 use prover::ProverConfig;
 use shared::Db;
 
+// Generate typed bindings for the BearTrap contract's useTicket function + errors.
+sol! {
+    #[sol(rpc)]
+    contract BearTrap {
+        error NoTickets();
+        error AlreadySolved();
+        error InvalidPuzzleId();
+
+        function useTicket(address user, uint256 puzzleId) external;
+    }
+}
+
 // ── Application State ────────────────────────────────────────
 
 struct AppState {
     db: Mutex<Db>,
     prover_config: ProverConfig,
     environment: String,
-    #[allow(dead_code)]
     operator_private_key: String,
-    #[allow(dead_code)]
     rpc_url: String,
-    #[allow(dead_code)]
     bear_trap_address: String,
 }
 
@@ -242,23 +258,123 @@ async fn prove(
     }; // DB lock released here
 
     // Step 3: Call useTicket on-chain
-    // TODO: Implement on-chain useTicket call via alloy.
-    //
-    // ```rust
-    // let signer: PrivateKeySigner = state.operator_private_key.parse()?;
-    // let provider = ProviderBuilder::new()
-    //     .with_recommended_fillers()
-    //     .wallet(EthereumWallet::from(signer))
-    //     .on_http(state.rpc_url.parse()?);
-    //
-    // let contract = BearTrap::new(state.bear_trap_address.parse()?, provider);
-    // let tx = contract.useTicket(req.solver_address.parse()?, req.puzzle_id.into());
-    // let receipt = tx.send().await?.get_receipt().await?;
-    // ```
+    let solver_addr: Address = match req.solver_address.parse() {
+        Ok(a) => a,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid solver address".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let bear_trap_addr: Address = match state.bear_trap_address.parse() {
+        Ok(a) => a,
+        Err(_) => {
+            tracing::error!("Invalid BEAR_TRAP_ADDRESS: {}", state.bear_trap_address);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Server misconfiguration: invalid contract address".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let signer: PrivateKeySigner = match state.operator_private_key.parse() {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::error!("Invalid OPERATOR_PRIVATE_KEY");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Server misconfiguration: invalid operator key".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let rpc_url: url::Url = match state.rpc_url.parse() {
+        Ok(u) => u,
+        Err(_) => {
+            tracing::error!("Invalid RPC_URL: {}", state.rpc_url);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Server misconfiguration: invalid RPC URL".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let wallet = EthereumWallet::from(signer);
+    let provider = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_http(rpc_url);
+
+    let contract = BearTrap::new(bear_trap_addr, provider);
+    let puzzle_id_u256 = alloy::primitives::U256::from(req.puzzle_id as u64);
+
     tracing::info!(
-        "Would call useTicket for {} on puzzle {} (on-chain call pending implementation)",
+        "Calling useTicket for {} on puzzle {}",
         req.solver_address,
         req.puzzle_id
+    );
+
+    let receipt = match contract.useTicket(solver_addr, puzzle_id_u256).send().await {
+        Ok(tx) => match tx.get_receipt().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("useTicket tx failed to confirm: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Ticket burn transaction failed to confirm".into(),
+                        ticket_burned: None,
+                    }),
+                )
+                    .into_response();
+            }
+        },
+        Err(e) => {
+            let err_string = format!("{e}");
+            tracing::error!("useTicket reverted: {err_string}");
+
+            let user_error = if err_string.contains("NoTickets") {
+                "You have no tickets. Buy tickets first."
+            } else if err_string.contains("AlreadySolved") {
+                "This puzzle has already been solved."
+            } else if err_string.contains("InvalidPuzzleId") {
+                "Invalid puzzle ID."
+            } else {
+                "On-chain ticket burn failed. Please try again."
+            };
+
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: user_error.into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    tracing::info!(
+        "useTicket confirmed in block {:?}, tx: {}",
+        receipt.block_number,
+        receipt.transaction_hash,
     );
 
     // Step 4: Generate ZK proof (mock or real depending on environment)
