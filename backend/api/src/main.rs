@@ -28,7 +28,6 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -51,13 +50,13 @@ sol! {
 // ── Application State ────────────────────────────────────────
 
 struct AppState {
-    db: Mutex<Db>,
+    db: std::sync::Mutex<Db>,
     prover_config: ProverConfig,
     environment: String,
     operator_signer: PrivateKeySigner,
     rpc_url: String,
     bear_trap_address: String,
-    rate_limiter: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    rate_limiter: tokio::sync::Mutex<HashMap<IpAddr, Vec<Instant>>>,
 }
 
 const RATE_LIMIT_MAX_REQUESTS: usize = 5;
@@ -86,6 +85,7 @@ struct PuzzleResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ErrorResponse {
     error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -113,8 +113,18 @@ struct MarkSolvedRequest {
 
 /// GET /api/puzzles — list all puzzles with prize info from active delegation.
 async fn list_puzzles(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let db = state.db.lock().await;
-    match db.list_puzzles(&state.environment) {
+    let env = state.environment.clone();
+    let db_result = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            db.list_puzzles(&env)
+        })
+        .await
+        .expect("spawn_blocking panicked")
+    };
+
+    match db_result {
         Ok(puzzles) => {
             let response: Vec<PuzzleResponse> = puzzles
                 .into_iter()
@@ -147,8 +157,18 @@ async fn get_puzzle(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().await;
-    match db.get_puzzle(&state.environment, id) {
+    let env = state.environment.clone();
+    let db_result = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            db.get_puzzle(&env, id)
+        })
+        .await
+        .expect("spawn_blocking panicked")
+    };
+
+    match db_result {
         Ok(Some(p)) => (
             StatusCode::OK,
             Json(PuzzleResponse {
@@ -313,63 +333,56 @@ async fn prove(
         }
     }
 
-    // Step 1 & 2: Read puzzle and delegation from DB (hold lock briefly)
-    let (puzzle, delegation) = {
-        let db = state.db.lock().await;
+    let env = state.environment.clone();
+    let puzzle_id = req.puzzle_id;
+    let db_result = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            let puzzle = db.get_puzzle(&env, puzzle_id).map_err(|e| e.to_string())?;
+            let delegation = db.get_active_delegation(&env, puzzle_id).map_err(|e| e.to_string())?;
+            Ok::<_, String>((puzzle, delegation))
+        })
+        .await
+        .expect("spawn_blocking panicked")
+    };
 
-        let puzzle = match db.get_puzzle(&state.environment, req.puzzle_id) {
-            Ok(Some(p)) => p,
-            Ok(None) => {
+    let (puzzle, delegation) = match db_result {
+        Ok((Some(puzzle), delegation)) => {
+            if puzzle.solved {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
-                        error: format!("No puzzle found with id {}", req.puzzle_id),
+                        error: "This puzzle has already been solved".into(),
                         ticket_burned: None,
                     }),
                 )
                     .into_response();
             }
-            Err(e) => {
-                tracing::error!("DB error reading puzzle: {e}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to read puzzle".into(),
-                        ticket_burned: None,
-                    }),
-                )
-                    .into_response();
-            }
-        };
-
-        if puzzle.solved {
+            (puzzle, delegation)
+        }
+        Ok((None, _)) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
-                    error: "This puzzle has already been solved".into(),
+                    error: format!("No puzzle found with id {}", req.puzzle_id),
                     ticket_burned: None,
                 }),
             )
                 .into_response();
         }
-
-        let delegation = match db.get_active_delegation(&state.environment, req.puzzle_id) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("DB error reading delegation: {e}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to read delegation".into(),
-                        ticket_burned: None,
-                    }),
-                )
-                    .into_response();
-            }
-        };
-
-        (puzzle, delegation)
-    }; // DB lock released here
+        Err(e) => {
+            tracing::error!("DB error reading puzzle/delegation: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to read puzzle".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response();
+        }
+    };
 
     // Step 3: Call useTicket on-chain
     let solver_addr: Address = match req.solver_address.parse() {
@@ -655,10 +668,17 @@ async fn mark_solved(
     }
 
     {
-        let db = state.db.lock().await;
-        if let Err(e) = db.mark_solved(&state.environment, req.puzzle_id, &req.winner) {
-            tracing::error!("Failed to mark puzzle solved in DB: {e}");
-        }
+        let env = state.environment.clone();
+        let puzzle_id = req.puzzle_id;
+        let winner = req.winner.clone();
+        let state = Arc::clone(&state);
+        let _ = tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            if let Err(e) = db.mark_solved(&env, puzzle_id, &winner) {
+                tracing::error!("Failed to mark puzzle solved in DB: {e}");
+            }
+        })
+        .await;
     }
 
     (
@@ -722,13 +742,13 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let state = Arc::new(AppState {
-        db: Mutex::new(db),
+        db: std::sync::Mutex::new(db),
         prover_config,
         environment,
         operator_signer,
         rpc_url,
         bear_trap_address,
-        rate_limiter: Mutex::new(HashMap::new()),
+        rate_limiter: tokio::sync::Mutex::new(HashMap::new()),
     });
 
     let cors = if frontend_url == "*" {

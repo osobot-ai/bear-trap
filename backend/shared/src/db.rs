@@ -30,43 +30,83 @@ pub struct Delegation {
     pub created_at: String,
 }
 
+const _CURRENT_SCHEMA_VERSION: i32 = 1;
+
 impl Db {
     /// Open (or create) a SQLite database at the given path.
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
-        // Enable WAL mode for better concurrent read performance.
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         Ok(Self { conn })
     }
 
-    /// Create tables if they don't exist.
-    pub fn init(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS puzzles (
-                id INTEGER PRIMARY KEY,
-                environment TEXT NOT NULL DEFAULT 'testnet',
-                solution_hash TEXT NOT NULL,
-                clue_uri TEXT NOT NULL DEFAULT '',
-                solved INTEGER NOT NULL DEFAULT 0,
-                winner TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
+    fn get_schema_version(&self) -> Result<i32> {
+        let table_exists: bool = self.conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='schema_version'",
+            [],
+            |row| row.get(0),
+        )?;
+        if !table_exists {
+            return Ok(0);
+        }
+        let version: i32 = self.conn.query_row(
+            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(version)
+    }
 
-            CREATE TABLE IF NOT EXISTS delegations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                environment TEXT NOT NULL DEFAULT 'testnet',
-                puzzle_id INTEGER NOT NULL REFERENCES puzzles(id),
-                delegation_json TEXT NOT NULL,
-                prize_eth TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            ",
+    fn set_schema_version(&self, version: i32) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO schema_version (version) VALUES (?1)",
+            params![version],
         )?;
         Ok(())
+    }
+
+    fn migrate(&self) -> Result<()> {
+        let current = self.get_schema_version()?;
+
+        if current < 1 {
+            self.conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER NOT NULL,
+                    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS puzzles (
+                    id INTEGER PRIMARY KEY,
+                    environment TEXT NOT NULL DEFAULT 'testnet',
+                    solution_hash TEXT NOT NULL,
+                    clue_uri TEXT NOT NULL DEFAULT '',
+                    solved INTEGER NOT NULL DEFAULT 0,
+                    winner TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS delegations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    environment TEXT NOT NULL DEFAULT 'testnet',
+                    puzzle_id INTEGER NOT NULL REFERENCES puzzles(id),
+                    delegation_json TEXT NOT NULL,
+                    prize_eth TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                ",
+            )?;
+            self.set_schema_version(1)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn init(&self) -> Result<()> {
+        self.migrate()
     }
 
     // ── Puzzles ──────────────────────────────────────────────

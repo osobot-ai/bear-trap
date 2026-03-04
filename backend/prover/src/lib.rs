@@ -187,6 +187,12 @@ pub async fn generate_proof(
 
     let rpc_url: url::Url = config.rpc_url.parse()?;
 
+    // TODO(boundless-market): verify `with_private_key_str` exists in v1.3.
+    // The upstream SDK may only expose `with_private_key(LocalSigner)` — if so,
+    // parse the key into a LocalSigner first:
+    //   let signer: LocalSigner = config.private_key.parse()?;
+    //   .with_private_key(signer)
+    // Also may require `.with_uploader_config(storage_config).await?` before `.build()`.
     let client = Client::builder()
         .with_rpc_url(rpc_url)
         .with_private_key_str(&config.private_key)?

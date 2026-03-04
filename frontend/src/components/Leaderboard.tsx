@@ -25,7 +25,6 @@ export function Leaderboard() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch historical PuzzleSolved and TicketUsed events
   useEffect(() => {
     if (!publicClient) {
       setIsLoading(false);
@@ -36,7 +35,10 @@ export function Leaderboard() {
 
     async function fetchEvents() {
       try {
-        // Fetch both event types in parallel
+        const currentBlock = await publicClient!.getBlockNumber();
+        const scanWindow = BigInt(100_000);
+        const fromBlock = currentBlock > scanWindow ? currentBlock - scanWindow : BigInt(0);
+
         const [solvedLogs, ticketUsedLogs] = await Promise.all([
           publicClient!.getLogs({
             address: BEAR_TRAP_ADDRESS,
@@ -56,7 +58,7 @@ export function Leaderboard() {
                 },
               ],
             },
-            fromBlock: "earliest",
+            fromBlock,
             toBlock: "latest",
           }),
           publicClient!.getLogs({
@@ -82,7 +84,7 @@ export function Leaderboard() {
                 },
               ],
             },
-            fromBlock: "earliest",
+            fromBlock,
             toBlock: "latest",
           }),
         ]);

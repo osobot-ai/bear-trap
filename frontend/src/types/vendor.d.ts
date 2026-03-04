@@ -104,11 +104,12 @@ declare module "wagmi" {
   export function usePublicClient(config?: {
     chainId?: number;
   }): {
+    getBlockNumber: () => Promise<bigint>;
     getLogs: (config: {
       address: `0x${string}`;
       event: any;
-      fromBlock: string;
-      toBlock: string;
+      fromBlock: bigint | string;
+      toBlock: bigint | string;
     }) => Promise<
       {
         args: any;
