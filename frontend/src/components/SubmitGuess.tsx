@@ -65,7 +65,7 @@ export function SubmitGuess() {
   });
 
   // Read ticket balance
-  const { data: ticketBalance } = useReadContract({
+  const { data: ticketBalance, refetch: refetchTicketBalance } = useReadContract({
     address: BEAR_TRAP_ADDRESS,
     abi: bearTrapAbi,
     functionName: "tickets",
@@ -137,6 +137,7 @@ export function SubmitGuess() {
         if (data.error?.includes("Wrong guess")) {
           setErrorMessage(data.error);
           setStep("wrong");
+          refetchTicketBalance();
           return;
         }
         throw new Error(data.error || "Proof generation failed");
@@ -145,13 +146,14 @@ export function SubmitGuess() {
       const result = data as ProveResult;
       setProofData(result);
       setStep("proof-ready");
+      refetchTicketBalance();
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to generate proof"
       );
       setStep("error");
     }
-  }, [passphrase, address, puzzleId]);
+  }, [passphrase, address, puzzleId, signMessageAsync, refetchTicketBalance]);
 
   // Step 2: Submit redeemDelegations with the proof
   const handleRedeemPrize = useCallback(() => {

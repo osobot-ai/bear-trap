@@ -98,18 +98,16 @@ fn load_guest_elf() -> Result<Vec<u8>> {
         "guests/puzzle-solver/target/riscv-guest/riscv32im-risc0-zkvm-elf/release/puzzle-solver";
     const DOCKER_PATH: &str = "/app/puzzle-solver.elf";
 
-    let paths: Vec<(&str, &str)> = if let Ok(env_path) = std::env::var("GUEST_ELF_PATH") {
-        // Leak is fine here — this runs once and lives for the process lifetime
-        let leaked: &'static str = Box::leak(env_path.into_boxed_str());
+    let paths: Vec<(String, &str)> = if let Ok(env_path) = std::env::var("GUEST_ELF_PATH") {
         vec![
-            (leaked, "GUEST_ELF_PATH"),
-            (LOCAL_DEV_PATH, "local dev"),
-            (DOCKER_PATH, "Docker/Railway"),
+            (env_path, "GUEST_ELF_PATH"),
+            (LOCAL_DEV_PATH.to_string(), "local dev"),
+            (DOCKER_PATH.to_string(), "Docker/Railway"),
         ]
     } else {
         vec![
-            (LOCAL_DEV_PATH, "local dev"),
-            (DOCKER_PATH, "Docker/Railway"),
+            (LOCAL_DEV_PATH.to_string(), "local dev"),
+            (DOCKER_PATH.to_string(), "Docker/Railway"),
         ]
     };
 
@@ -124,7 +122,7 @@ fn load_guest_elf() -> Result<Vec<u8>> {
         "Failed to read guest ELF binary from any path. Tried: {}",
         paths
             .iter()
-            .map(|(p, _)| *p)
+            .map(|(p, _)| p.as_str())
             .collect::<Vec<_>>()
             .join(", ")
     )

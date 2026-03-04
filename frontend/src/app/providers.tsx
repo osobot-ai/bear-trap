@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider } from "wagmi";
 import { ConnectKitProvider } from "connectkit";
 import { config } from "@/lib/wagmi";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useState, type ReactNode } from "react";
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -30,7 +31,7 @@ export function Providers({ children }: { children: ReactNode }) {
             "--ck-accent-text-color": "#000000",
           }}
         >
-          {children}
+          <ErrorBoundary>{children}</ErrorBoundary>
         </ConnectKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
