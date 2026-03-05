@@ -55,7 +55,7 @@ contract ZKPEnforcer is CaveatEnforcer {
     function beforeHook(
         bytes calldata _terms,
         bytes calldata _args,
-        ModeCode,
+        ModeCode _mode,
         bytes calldata,
         bytes32,
         address,
@@ -63,6 +63,8 @@ contract ZKPEnforcer is CaveatEnforcer {
     )
         public
         override
+        onlySingleCallTypeMode(_mode)
+        onlyDefaultExecutionMode(_mode)
     {
         (bytes32 imageId, uint256 termsPuzzleId, address operatorAddress) =
             abi.decode(_terms, (bytes32, uint256, address));
