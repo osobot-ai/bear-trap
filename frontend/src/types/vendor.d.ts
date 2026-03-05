@@ -86,6 +86,18 @@ declare module "wagmi" {
     error: Error | null;
   };
 
+  export function useSendTransaction(): {
+    data: `0x${string}` | undefined;
+    sendTransaction: (config: {
+      to: `0x${string}`;
+      data?: `0x${string}`;
+      value?: bigint;
+      chainId?: number;
+    }) => void;
+    isPending: boolean;
+    error: Error | null;
+  };
+
   export function useWaitForTransactionReceipt(config: {
     hash: `0x${string}` | undefined;
   }): {
