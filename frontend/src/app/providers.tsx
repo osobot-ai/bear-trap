@@ -1,13 +1,14 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { WagmiProvider } from "wagmi";
-import { ConnectKitProvider } from "connectkit";
-import { config } from "@/lib/wagmi";
+import { Web3AuthProvider } from "@web3auth/modal/react";
+import { WagmiProvider } from "@web3auth/modal/react/wagmi";
+import { web3AuthContextConfig } from "@/lib/web3authConfig";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 
 export function Providers({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false);
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -20,20 +21,28 @@ export function Providers({ children }: { children: ReactNode }) {
       })
   );
 
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-trap-black">
+        <div className="text-center">
+          <div className="text-4xl mb-4 animate-pulse">🐻</div>
+          <p className="text-trap-muted text-sm font-mono">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <WagmiProvider config={config}>
+    <Web3AuthProvider config={web3AuthContextConfig}>
       <QueryClientProvider client={queryClient}>
-        <ConnectKitProvider
-          theme="midnight"
-          customTheme={{
-            "--ck-font-family": '"Instrument Sans", system-ui, sans-serif',
-            "--ck-accent-color": "#22c55e",
-            "--ck-accent-text-color": "#000000",
-          }}
-        >
+        <WagmiProvider>
           <ErrorBoundary>{children}</ErrorBoundary>
-        </ConnectKitProvider>
+        </WagmiProvider>
       </QueryClientProvider>
-    </WagmiProvider>
+    </Web3AuthProvider>
   );
 }

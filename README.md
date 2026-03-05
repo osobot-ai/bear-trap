@@ -49,7 +49,7 @@ Right guess: ticket burned → proof generated → redeemDelegations → ETH pri
 | On-chain Verifier | Boundless verifier contract (IRiscZeroVerifier) |
 | Delegation Framework | MetaMask Delegation Framework (ERC-7710) |
 | Token | $OSO on Base (`0xc78fabc2cb5b9cf59e0af3da8e3bc46d47753a4e`) |
-| Frontend | Next.js 14, viem, wagmi, ConnectKit (Vercel) |
+| Frontend | Next.js 14, viem, wagmi, Web3Auth Modal (Vercel) |
 | Backend | Rust, axum, SQLite (Railway) |
 | Admin CLI | Rust, clap (via `railway run`) |
 
@@ -165,7 +165,7 @@ Frontend `.env.local`:
 
 ```env
 NEXT_PUBLIC_BEAR_TRAP_ADDRESS=0x...
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
+NEXT_PUBLIC_WEB3AUTH_CLIENT_ID=your_web3auth_client_id_here
 NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
 ```
 
