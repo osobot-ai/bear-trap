@@ -1,11 +1,12 @@
 "use client";
 
-import { useAccount } from "wagmi";
+import { useAccount, useDisconnect } from "wagmi";
 import { useWeb3AuthConnect } from "@web3auth/modal/react";
 
 export function WalletButton() {
   const { address, isConnected } = useAccount();
   const { connect, loading } = useWeb3AuthConnect();
+  const { disconnect } = useDisconnect();
 
   const truncatedAddress = address
     ? address.slice(0, 6) + "..." + address.slice(-4)
@@ -13,14 +14,14 @@ export function WalletButton() {
 
   return (
     <button
-      onClick={() => connect()}
+      onClick={() => (isConnected ? disconnect() : connect())}
       disabled={loading}
       className={`
         relative group flex items-center gap-2.5 rounded-lg px-4 py-2.5
         font-mono text-sm font-medium transition-all duration-300
         ${
           isConnected
-            ? "bg-trap-dark border border-trap-border hover:border-trap-green/40 text-trap-text"
+            ? "bg-trap-dark border border-trap-border hover:border-trap-red/40 text-trap-text"
             : "bg-trap-green/10 border border-trap-green/30 hover:bg-trap-green/20 hover:border-trap-green/50 text-trap-green"
         }
       `}

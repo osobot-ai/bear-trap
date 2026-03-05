@@ -43,6 +43,11 @@ declare module "wagmi" {
     chain?: { id: number };
   };
 
+
+  export function useDisconnect(): {
+    disconnect: () => void;
+    isPending: boolean;
+  };
   export function useReadContract(config: {
     address: `0x${string}`;
     abi: readonly any[];

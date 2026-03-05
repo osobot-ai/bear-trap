@@ -26,7 +26,14 @@ export function Providers({ children }: { children: ReactNode }) {
   }, []);
 
   if (!mounted) {
-    return null;
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-trap-black">
+        <div className="text-center">
+          <div className="text-4xl mb-4 animate-pulse">🐻</div>
+          <p className="text-trap-muted text-sm font-mono">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
