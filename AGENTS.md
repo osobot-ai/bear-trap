@@ -155,7 +155,7 @@ NEXT_PUBLIC_OSO_TOKEN_ADDRESS=0x...  # MockOSO on testnet, real $OSO on mainnet
 
 # Backend
 NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
+NEXT_PUBLIC_WEB3AUTH_CLIENT_ID=your_web3auth_client_id_here
 ```
 
 ## 4. Backend Mock Proving

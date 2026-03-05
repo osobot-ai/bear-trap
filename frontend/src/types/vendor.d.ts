@@ -146,32 +146,40 @@ declare module "wagmi/chains" {
   };
 }
 
-declare module "connectkit" {
+declare module "@web3auth/modal/react" {
   import type { ReactNode } from "react";
 
-  export function ConnectKitProvider(props: {
-    theme?: string;
-    customTheme?: Record<string, string>;
+  export interface Web3AuthContextConfig {
+    web3AuthOptions: any;
+  }
+
+  export function Web3AuthProvider(props: {
+    config: Web3AuthContextConfig;
     children: ReactNode;
   }): React.JSX.Element;
 
-  export const ConnectKitButton: {
-    Custom: (props: {
-      children: (renderProps: {
-        isConnected: boolean;
-        show: (() => void) | undefined;
-        truncatedAddress: string | undefined;
-        ensName: string | undefined;
-      }) => React.ReactNode;
-    }) => React.JSX.Element;
+  export function useWeb3AuthConnect(): {
+    connect: () => Promise<void>;
+    loading: boolean;
   };
+}
 
-  export function getDefaultConfig(config: {
-    chains: readonly unknown[];
-    transports: Record<number, unknown>;
-    walletConnectProjectId: string;
-    appName: string;
-    appDescription?: string;
-    appUrl?: string;
-  }): unknown;
+declare module "@web3auth/modal/react/wagmi" {
+  import type { ReactNode } from "react";
+
+  export function WagmiProvider(props: {
+    children: ReactNode;
+  }): React.JSX.Element;
+}
+
+declare module "@web3auth/modal" {
+  export enum WEB3AUTH_NETWORK {
+    SAPPHIRE_DEVNET = "sapphire_devnet",
+    SAPPHIRE_MAINNET = "sapphire_mainnet",
+  }
+
+  export interface Web3AuthOptions {
+    clientId: string;
+    web3AuthNetwork: WEB3AUTH_NETWORK;
+  }
 }
