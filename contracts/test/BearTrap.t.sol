@@ -79,6 +79,10 @@ contract BearTrapTest is Test {
 
     uint256 ticketPrice = 1 ether;
 
+    // Test operator keypair for signature tests
+    uint256 operatorKey = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    address operatorAddr;
+
     function setUp() public {
         osoToken = new MockERC20();
         bearTrap = new BearTrap(
@@ -88,6 +92,29 @@ contract BearTrapTest is Test {
         );
         mockVerifier = new MockRiscZeroVerifier();
         zkpEnforcer = new ZKPEnforcer(IRiscZeroVerifier(address(mockVerifier)));
+        operatorAddr = vm.addr(operatorKey);
+    }
+
+    // ==================== Helpers ====================
+
+    function _givePlayerTickets(uint256 amount) internal {
+        osoToken.mint(player, ticketPrice * amount);
+        vm.startPrank(player);
+        osoToken.approve(address(bearTrap), ticketPrice * amount);
+        bearTrap.buyTickets(amount);
+        vm.stopPrank();
+    }
+
+    /// Build an operator signature: keccak256(abi.encodePacked(solver, puzzleId, solutionHash))
+    /// signed with operatorKey (raw hash, no EIP-191 prefix).
+    function _signOperator(
+        address solver,
+        uint256 puzzleId,
+        bytes32 solutionHash
+    ) internal view returns (bytes memory) {
+        bytes32 messageHash = keccak256(abi.encodePacked(solver, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        return abi.encodePacked(r, s, v);
     }
 
     // ==================== Ticket Tests ====================
@@ -281,8 +308,9 @@ contract BearTrapTest is Test {
         bytes32 imageId = bytes32(uint256(42));
         uint256 puzzleId = 0;
 
-        bytes memory terms = abi.encode(imageId, puzzleId);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId);
+        bytes memory operatorSig = _signOperator(player, puzzleId, solutionHash);
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -303,8 +331,9 @@ contract BearTrapTest is Test {
         bytes32 imageId = bytes32(uint256(42));
         uint256 puzzleId = 0;
 
-        bytes memory terms = abi.encode(imageId, puzzleId);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId);
+        bytes memory operatorSig = _signOperator(player, puzzleId, solutionHash);
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
         bytes memory seal = hex"baadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -327,10 +356,10 @@ contract BearTrapTest is Test {
         bytes32 imageId = bytes32(uint256(42));
         uint256 puzzleId = 0;
 
-        bytes memory terms = abi.encode(imageId, puzzleId);
-
         address wrongSolver = address(0xDEAD);
-        bytes memory journal = abi.encode(wrongSolver, solutionHash, puzzleId);
+        bytes memory operatorSig = _signOperator(wrongSolver, puzzleId, solutionHash);
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(wrongSolver, solutionHash, puzzleId, operatorSig);
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -354,8 +383,9 @@ contract BearTrapTest is Test {
         uint256 termsPuzzleId = 0;
         uint256 journalPuzzleId = 999;
 
-        bytes memory terms = abi.encode(imageId, termsPuzzleId);
-        bytes memory journal = abi.encode(player, solutionHash, journalPuzzleId);
+        bytes memory operatorSig = _signOperator(player, journalPuzzleId, solutionHash);
+        bytes memory terms = abi.encode(imageId, termsPuzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, journalPuzzleId, operatorSig);
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -366,6 +396,127 @@ contract BearTrapTest is Test {
             terms,
             args,
             ModeCode.wrap(bytes32(0)),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
+    function test_ZKPEnforcerWrongOperator() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        // Sign with a different key than what's in terms
+        uint256 wrongKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, messageHash);
+        bytes memory wrongSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, wrongSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        vm.expectRevert(ZKPEnforcer.OperatorMismatch.selector);
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(bytes32(0)),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
+
+    function test_ZKPEnforcerRejectsBatchMode() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        // Batch mode: callType=0x01, execType=0x00
+        bytes32 batchMode = bytes32(bytes1(0x01));
+        vm.expectRevert("CaveatEnforcer:invalid-call-type");
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(batchMode),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
+    function test_ZKPEnforcerRejectsTryMode() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        // Try mode: callType=0x00, execType=0x01
+        bytes32 tryMode = bytes32(bytes2(0x0001));
+        vm.expectRevert("CaveatEnforcer:invalid-execution-type");
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(tryMode),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
+    function test_ZKPEnforcerRejectsBatchTryMode() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        // Batch + Try mode: callType=0x01, execType=0x01
+        bytes32 batchTryMode = bytes32(bytes2(0x0101));
+        vm.expectRevert("CaveatEnforcer:invalid-call-type");
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(batchTryMode),
             "",
             bytes32(0),
             address(0),
@@ -415,15 +566,5 @@ contract BearTrapTest is Test {
         assertTrue(solved);
         assertEq(winner, player);
         assertEq(keccak256(bytes(clueURI)), keccak256(bytes("ipfs://clue")));
-    }
-
-    // ==================== Helpers ====================
-
-    function _givePlayerTickets(uint256 amount) internal {
-        osoToken.mint(player, ticketPrice * amount);
-        vm.startPrank(player);
-        osoToken.approve(address(bearTrap), ticketPrice * amount);
-        bearTrap.buyTickets(amount);
-        vm.stopPrank();
     }
 }

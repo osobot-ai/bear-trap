@@ -77,12 +77,11 @@ pub async fn generate_mock_proof(
         anyhow::bail!("Wrong guess. Your ticket has been consumed.");
     }
 
-    // Sign operator attestation (validates the mock flow matches real flow)
-    let (_sig_bytes, _operator_address) =
+    let (sig_bytes, _operator_address) =
         sign_operator_attestation(operator_signer, solver_address, puzzle_id, expected_hash)
             .await?;
 
-    let journal = encode_journal(solver_address, expected_hash, puzzle_id)?;
+    let journal = encode_journal(solver_address, expected_hash, puzzle_id, &sig_bytes)?;
 
     Ok(ProofResult {
         seal: vec![0u8; 32],
@@ -93,8 +92,16 @@ pub async fn generate_mock_proof(
     })
 }
 
-/// ABI-encode `(address, bytes32, uint256)` matching the guest program's journal output format.
-fn encode_journal(solver_address: &str, solution_hash: &str, puzzle_id: u64) -> Result<Vec<u8>> {
+/// ABI-encode `(address, bytes32, uint256, bytes)` matching the guest program's journal output format.
+///
+/// Layout for `abi.encode(address, bytes32, uint256, bytes)`:
+///   offset 0:   address (32 bytes, left-padded)
+///   offset 32:  bytes32 (32 bytes)
+///   offset 64:  uint256 (32 bytes)
+///   offset 96:  offset pointer to bytes data = 128
+///   offset 128: length of bytes (32 bytes)
+///   offset 160: bytes data (right-padded to 32-byte boundary)
+fn encode_journal(solver_address: &str, solution_hash: &str, puzzle_id: u64, operator_sig: &[u8]) -> Result<Vec<u8>> {
     let addr_clean = solver_address.strip_prefix("0x").unwrap_or(solver_address);
     let hash_clean = solution_hash.strip_prefix("0x").unwrap_or(solution_hash);
 
@@ -114,18 +121,41 @@ fn encode_journal(solver_address: &str, solution_hash: &str, puzzle_id: u64) -> 
         );
     }
 
-    // ABI encode: (address=32, bytes32=32, uint256=32) = 96 bytes
-    let mut encoded = Vec::with_capacity(96);
+    // Calculate padded sig length (round up to 32-byte boundary)
+    let sig_len = operator_sig.len();
+    let sig_padded_len = ((sig_len + 31) / 32) * 32;
 
+    // Total: 32 (addr) + 32 (hash) + 32 (puzzleId) + 32 (offset) + 32 (length) + sig_padded_len
+    let total_len = 32 + 32 + 32 + 32 + 32 + sig_padded_len;
+    let mut encoded = Vec::with_capacity(total_len);
+
+    // address (left-padded to 32 bytes)
     let mut addr_padded = [0u8; 32];
     addr_padded[12..32].copy_from_slice(&addr_bytes);
     encoded.extend_from_slice(&addr_padded);
 
+    // bytes32
     encoded.extend_from_slice(&hash_bytes);
 
+    // uint256 puzzleId
     let mut puzzle_id_padded = [0u8; 32];
     puzzle_id_padded[24..32].copy_from_slice(&puzzle_id.to_be_bytes());
     encoded.extend_from_slice(&puzzle_id_padded);
+
+    // offset pointer to dynamic bytes data (4 * 32 = 128)
+    let mut offset = [0u8; 32];
+    offset[31] = 128;
+    encoded.extend_from_slice(&offset);
+
+    // length of bytes
+    let mut len_padded = [0u8; 32];
+    len_padded[24..32].copy_from_slice(&(sig_len as u64).to_be_bytes());
+    encoded.extend_from_slice(&len_padded);
+
+    // bytes data (right-padded to 32-byte boundary)
+    encoded.extend_from_slice(operator_sig);
+    let padding_needed = sig_padded_len - sig_len;
+    encoded.extend_from_slice(&vec![0u8; padding_needed]);
 
     Ok(encoded)
 }
@@ -274,12 +304,23 @@ mod tests {
     fn test_encode_journal() {
         let addr = "0x000000000000000000000000000000000000bEEF";
         let hash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-        let journal = encode_journal(addr, hash, 42).unwrap();
-        assert_eq!(journal.len(), 96);
+        let sig = vec![0xAAu8; 65];
+        let journal = encode_journal(addr, hash, 42, &sig).unwrap();
+        // 32 (addr) + 32 (hash) + 32 (puzzleId) + 32 (offset) + 32 (length) + 96 (65 bytes padded) = 256
+        assert_eq!(journal.len(), 256);
         assert_eq!(journal[30], 0xbe);
         assert_eq!(journal[31], 0xef);
         // puzzleId = 42 at offset 64..96 (big-endian u256)
         assert_eq!(journal[95], 42);
+        // offset pointer at 96..128 = 128
+        assert_eq!(journal[127], 128);
+        // length at 128..160 = 65
+        assert_eq!(journal[159], 65);
+        // sig data starts at 160
+        assert_eq!(journal[160], 0xAA);
+        assert_eq!(journal[224], 0xAA);
+        // padding after sig (bytes 225..256 should be 0)
+        assert_eq!(journal[225], 0);
     }
 
     #[tokio::test]
@@ -303,7 +344,7 @@ mod tests {
 
         assert_eq!(result.seal.len(), 32);
         assert!(result.seal.iter().all(|&b| b == 0));
-        assert_eq!(result.journal.len(), 96);
+        assert_eq!(result.journal.len(), 256);
         assert_eq!(result.puzzle_id, 0);
     }
 
@@ -343,8 +384,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.puzzle_id, 7);
-        // puzzleId encoded in journal at bytes 64..96
         assert_eq!(result.journal[95], 7);
+        // journal now includes operatorSig: 256 bytes total
+        assert_eq!(result.journal.len(), 256);
     }
 
     #[tokio::test]

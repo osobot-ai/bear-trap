@@ -49,7 +49,7 @@ sol! {
 
 // ZKPEnforcer ProofVerified event for tx receipt log parsing.
 sol! {
-    event ProofVerified(address indexed redeemer, bytes32 indexed solutionHash, bytes32 indexed imageId, uint256 puzzleId);
+    event ProofVerified(address indexed redeemer, bytes32 indexed solutionHash, bytes32 indexed imageId, uint256 puzzleId, address operatorAddress);
 }
 
 // ── Application State ────────────────────────────────────────

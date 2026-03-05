@@ -37,6 +37,7 @@ sol! {
         address solverAddress;
         bytes32 solutionHash;
         uint256 puzzleId;
+        bytes operatorSig;
     }
 }
 
@@ -118,11 +119,13 @@ fn main() {
     );
 
     // ── Step 3: Commit the public output to the journal ──────
-    // This binds the proof to: (1) the solver's address, (2) the solution hash, (3) the puzzleId
+    // This binds the proof to: (1) the solver's address, (2) the solution hash,
+    // (3) the puzzleId, and (4) the operator signature (for on-chain operator verification)
     let output = PuzzleOutput {
         solverAddress: input.solverAddress,
         solutionHash: input.expectedHash,
         puzzleId: input.puzzleId,
+        operatorSig: input.operatorSig.clone(),
     };
     env::commit_slice(&output.abi_encode());
 }

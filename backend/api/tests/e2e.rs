@@ -124,17 +124,13 @@ async fn e2e_mock_proof_correct_answer() {
         .await
         .unwrap();
 
-    // Verify proof structure
     assert_eq!(result.seal.len(), 32, "Mock seal should be 32 zero bytes");
     assert!(result.seal.iter().all(|&b| b == 0), "Mock seal should be all zeros");
-    assert_eq!(result.journal.len(), 96, "Journal should be 96 bytes (address + bytes32 + uint256)");
+    assert_eq!(result.journal.len(), 256, "Journal should be 256 bytes (address + bytes32 + uint256 + bytes w/ 65-byte sig)");
 
-    // Verify journal encodes solver address correctly
-    // Address is left-padded to 32 bytes, so 0xbEEF should be at bytes 30-31
     assert_eq!(result.journal[30], 0xbe);
     assert_eq!(result.journal[31], 0xef);
 
-    // Verify solution hash is in bytes 32-63
     let hash_bytes = hex::decode(expected_hash.strip_prefix("0x").unwrap()).unwrap();
     assert_eq!(&result.journal[32..64], &hash_bytes[..]);
 }
@@ -214,7 +210,7 @@ async fn e2e_full_testnet_flow() {
         .unwrap();
 
     assert_eq!(result.seal.len(), 32);
-    assert_eq!(result.journal.len(), 96);
+    assert_eq!(result.journal.len(), 256);
 
     // 5. Mark puzzle as solved
     db.mark_solved("testnet", puzzle_id, solver_address).unwrap();
@@ -261,7 +257,7 @@ async fn e2e_multiple_puzzles_independent() {
     let proof1 = generate_mock_proof(answer1, solver, &format!("0x{}", hash1), 0, &test_operator_signer())
         .await
         .unwrap();
-    assert_eq!(proof1.journal.len(), 96);
+    assert_eq!(proof1.journal.len(), 256);
     db.mark_solved("testnet", id1, solver).unwrap();
 
     // Puzzle 1 solved, puzzle 2 still open
