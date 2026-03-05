@@ -281,7 +281,7 @@ async fn prove(
 
     // Verify EIP-191 signature proves caller owns solver_address (prevents ticket griefing)
     {
-        let message = format!("Bear Trap: solve puzzle {}", req.puzzle_id);
+        let message = format!("Bear Trap: solve puzzle {} with {}", req.puzzle_id, req.passphrase.trim());
         let prefixed = format!("\x19Ethereum Signed Message:\n{}{}", message.len(), message);
         let hash = alloy::primitives::keccak256(prefixed.as_bytes());
 
