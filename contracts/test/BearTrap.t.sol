@@ -433,6 +433,97 @@ contract BearTrapTest is Test {
         );
     }
 
+
+    function test_ZKPEnforcerRejectsBatchMode() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        // Batch mode: callType=0x01, execType=0x00
+        bytes32 batchMode = bytes32(bytes1(0x01));
+        vm.expectRevert("CaveatEnforcer:invalid-call-type");
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(batchMode),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
+    function test_ZKPEnforcerRejectsTryMode() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        // Try mode: callType=0x00, execType=0x01
+        bytes32 tryMode = bytes32(bytes2(0x0001));
+        vm.expectRevert("CaveatEnforcer:invalid-execution-type");
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(tryMode),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
+    function test_ZKPEnforcerRejectsBatchTryMode() public {
+        bytes32 solutionHash = sha256("correct answer");
+        bytes32 imageId = bytes32(uint256(42));
+        uint256 puzzleId = 0;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(player, puzzleId, solutionHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, messageHash);
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
+
+        bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
+        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory seal = hex"deadbeef";
+        bytes memory args = abi.encode(seal, journal);
+
+        mockVerifier.setShouldVerify(true);
+
+        // Batch + Try mode: callType=0x01, execType=0x01
+        bytes32 batchTryMode = bytes32(bytes2(0x0101));
+        vm.expectRevert("CaveatEnforcer:invalid-call-type");
+        zkpEnforcer.beforeHook(
+            terms,
+            args,
+            ModeCode.wrap(batchTryMode),
+            "",
+            bytes32(0),
+            address(0),
+            player
+        );
+    }
+
     // ==================== Ownership Tests ====================
 
     function test_TransferOwnership() public {
