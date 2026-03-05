@@ -202,7 +202,7 @@ export function BuyTickets() {
             <p className="mt-2 text-xs font-mono text-trap-muted">
               Total cost:{" "}
               <span className="text-trap-amber">
-                {(parsedAmount * 1000).toLocaleString()} $OSO
+                {(parsedAmount * Number(TICKET_PRICE_RAW / BigInt(10 ** 18))).toLocaleString()} $OSO
               </span>
             </p>
           )}

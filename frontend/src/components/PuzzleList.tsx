@@ -1,45 +1,39 @@
 "use client";
 
-import { useReadContract, useReadContracts } from "wagmi";
-import { bearTrapAbi } from "@/lib/abi/bearTrap";
-import { BEAR_TRAP_ADDRESS, BASE_CHAIN_ID } from "@/lib/contracts";
+import { useState, useEffect } from "react";
+import { BACKEND_URL } from "@/lib/contracts";
 import { PuzzleCard } from "./PuzzleCard";
-import { type Address } from "viem";
+
+interface PuzzleApiResponse {
+  id: number;
+  clueURI: string;
+  prizeEth: string | null;
+  solved: boolean;
+  winner: string | null;
+}
 
 export function PuzzleList() {
-  const {
-    data: puzzleCount,
-    isLoading: isCountLoading,
-    isError: isCountError,
-  } = useReadContract({
-    address: BEAR_TRAP_ADDRESS,
-    abi: bearTrapAbi,
-    functionName: "puzzleCount",
-    chainId: BASE_CHAIN_ID,
-  });
+  const [puzzles, setPuzzles] = useState<PuzzleApiResponse[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isError, setIsError] = useState(false);
 
-  const count = puzzleCount ? Number(puzzleCount) : 0;
+  useEffect(() => {
+    async function fetchPuzzles() {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/puzzles`);
+        if (!res.ok) throw new Error("Failed to fetch puzzles");
+        const data = (await res.json()) as PuzzleApiResponse[];
+        setPuzzles(data);
+      } catch {
+        setIsError(true);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchPuzzles();
+  }, []);
 
-  // puzzles are 0-indexed: 0, 1, 2, ...
-  const puzzleContracts = Array.from({ length: count }, (_, i) => ({
-    address: BEAR_TRAP_ADDRESS,
-    abi: bearTrapAbi,
-    functionName: "puzzles" as const,
-    args: [BigInt(i)] as const,
-    chainId: BASE_CHAIN_ID,
-  }));
-
-  const {
-    data: puzzlesData,
-    isLoading: isPuzzlesLoading,
-  } = useReadContracts({
-    contracts: puzzleContracts,
-    query: {
-      enabled: count > 0,
-    },
-  });
-
-  const isLoading = isCountLoading || isPuzzlesLoading;
+  const count = puzzles.length;
 
   return (
     <section>
@@ -81,7 +75,7 @@ export function PuzzleList() {
             </div>
           ))}
         </div>
-      ) : isCountError ? (
+      ) : isError ? (
         <div className="glass-panel rounded-xl p-8 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-trap-red/10 border border-trap-red/20">
             <svg
@@ -99,8 +93,8 @@ export function PuzzleList() {
             </svg>
           </div>
           <p className="text-sm text-trap-muted">
-            Unable to read contract. Check that the Bear Trap contract is
-            deployed and the address is configured.
+            Unable to load puzzles from the backend. Check that the API server
+            is running and the backend URL is configured.
           </p>
         </div>
       ) : count === 0 ? (
@@ -128,29 +122,16 @@ export function PuzzleList() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {puzzlesData?.map((result, index) => {
-            if (result.status !== "success" || !result.result) return null;
-
-            // puzzles() returns: (bytes32 solutionHash, uint256 prizeAmount, address winner, bool solved, string clueURI)
-            const puzzle = result.result as unknown as [
-              `0x${string}`, // solutionHash
-              bigint,        // prizeAmount
-              Address,       // winner
-              boolean,       // solved
-              string         // clueURI
-            ];
-
-            return (
-              <PuzzleCard
-                key={index}
-                puzzleId={index}
-                prize={puzzle[1]}
-                clueURI={puzzle[4]}
-                solved={puzzle[3]}
-                winner={puzzle[2]}
-              />
-            );
-          })}
+          {puzzles.map((puzzle) => (
+            <PuzzleCard
+              key={puzzle.id}
+              puzzleId={puzzle.id}
+              clueURI={puzzle.clueURI}
+              prizeEth={puzzle.prizeEth}
+              solved={puzzle.solved}
+              winner={puzzle.winner ?? "0x0000000000000000000000000000000000000000"}
+            />
+          ))}
         </div>
       )}
     </section>

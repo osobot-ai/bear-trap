@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 import {Script, console2} from "forge-std/Script.sol";
 import {BearTrap, IERC20} from "../src/BearTrap.sol";
 import {ZKPEnforcer} from "../src/ZKPEnforcer.sol";
-import {IDelegationManager} from "delegation-framework/interfaces/IDelegationManager.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 /// @title Deploy — Deploy Bear Trap contracts
@@ -16,14 +15,14 @@ contract Deploy is Script {
         // Read environment variables
         address verifierAddress = vm.envAddress("VERIFIER_ADDRESS");
         address osoTokenAddress = vm.envAddress("OSO_TOKEN");
-        address delegationManagerAddress = vm.envAddress("DELEGATION_MANAGER");
         uint256 ticketPrice = vm.envUint("TICKET_PRICE");
+        address ownerAddress = vm.envAddress("OWNER_ADDRESS");
 
         console2.log("Deploying Bear Trap contracts...");
         console2.log("Verifier:", verifierAddress);
         console2.log("OSO Token:", osoTokenAddress);
-        console2.log("Delegation Manager:", delegationManagerAddress);
         console2.log("Ticket Price:", ticketPrice);
+        console2.log("Owner:", ownerAddress);
 
         vm.startBroadcast();
 
@@ -33,11 +32,11 @@ contract Deploy is Script {
         );
         console2.log("ZKPEnforcer deployed at:", address(zkpEnforcer));
 
-        // Deploy BearTrap
+        // Deploy BearTrap with owner (who is also the operator)
         BearTrap bearTrap = new BearTrap(
             IERC20(osoTokenAddress),
-            IDelegationManager(delegationManagerAddress),
-            ticketPrice
+            ticketPrice,
+            ownerAddress
         );
         console2.log("BearTrap deployed at:", address(bearTrap));
 

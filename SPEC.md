@@ -47,7 +47,7 @@ Player                     Boundless              PuzzleContract
   |                             -> NativeTransfer      |
   |                               enforcer allows ETH  |
   |                           }                        |
-  |                           catch { WrongGuess }     |
+  |                           catch { revert }     |
   |                           |                        |
   |<--------------- 7. ETH prize (if correct) ---------|
 ```
