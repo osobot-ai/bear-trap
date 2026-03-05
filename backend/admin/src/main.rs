@@ -7,6 +7,9 @@ use std::env;
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use shared::{Db, validate_delegation_json};
+use alloy::primitives::{Address, B256, U256, keccak256};
+use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 
 #[derive(Parser)]
 #[command(name = "bear-trap-admin")]
@@ -68,6 +71,38 @@ enum Commands {
 
     /// List all puzzles with their active delegation prize.
     ListPuzzles,
+
+    /// Create and sign a delegation for a puzzle (via DelegationManager off-chain signing).
+    /// Generates the delegation JSON with proper ZKPEnforcer terms encoding.
+    CreateDelegation {
+        /// Puzzle ID for the delegation.
+        #[arg(long)]
+        puzzle_id: i64,
+
+        /// Delegator private key (hex, with or without 0x prefix). The wallet funding the prize.
+        #[arg(long)]
+        private_key: String,
+
+        /// Delegate address (who can redeem — typically the DelegationManager or a universal delegate).
+        #[arg(long)]
+        delegate: String,
+
+        /// ZKPEnforcer contract address.
+        #[arg(long)]
+        enforcer: String,
+
+        /// RISC0 image ID (bytes32 hex).
+        #[arg(long)]
+        image_id: String,
+
+        /// Operator address (backend signer).
+        #[arg(long)]
+        operator: String,
+
+        /// Prize amount in ETH (e.g., "0.01").
+        #[arg(long)]
+        prize: String,
+    },
 
     /// Mark a puzzle as solved with a winner address.
     MarkSolved {
@@ -184,6 +219,84 @@ fn main() {
                 );
             }
             println!();
+        }
+
+        Commands::CreateDelegation {
+            puzzle_id,
+            private_key,
+            delegate,
+            enforcer,
+            image_id,
+            operator,
+            prize,
+        } => {
+            let db = get_db();
+            db.init().expect("Failed to initialize database");
+
+            // Parse the delegator signer
+            let signer: PrivateKeySigner = private_key
+                .parse()
+                .expect("Invalid private key");
+            let delegator = signer.address();
+
+            // Build ZKPEnforcer terms: abi.encode(bytes32 imageId, uint256 puzzleId, address operatorAddress)
+            let image_id_bytes: B256 = image_id.parse().expect("Invalid image ID (need bytes32 hex)");
+            let puzzle_id_u256 = U256::from(puzzle_id as u64);
+            let operator_addr: Address = operator.parse().expect("Invalid operator address");
+
+            // ABI encode: each field padded to 32 bytes
+            let mut terms = Vec::with_capacity(96);
+            terms.extend_from_slice(image_id_bytes.as_slice()); // 32 bytes
+            terms.extend_from_slice(&puzzle_id_u256.to_be_bytes::<32>()); // 32 bytes
+            // address is left-padded to 32 bytes
+            let mut addr_padded = [0u8; 32];
+            addr_padded[12..].copy_from_slice(operator_addr.as_slice());
+            terms.extend_from_slice(&addr_padded); // 32 bytes
+
+            let terms_hex = format!("0x{}", hex::encode(&terms));
+
+            let delegate_addr: Address = delegate.parse().expect("Invalid delegate address");
+
+            // Build the delegation struct
+            // authority = 0x0...0 (root authority)
+            let authority = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+            let delegation_json = serde_json::json!({
+                "delegate": format!("{:?}", delegate_addr),
+                "delegator": format!("{:?}", delegator),
+                "authority": authority,
+                "caveats": [{
+                    "enforcer": format!("{:?}", enforcer.parse::<Address>().expect("Invalid enforcer address")),
+                    "terms": terms_hex,
+                    "args": "0x"
+                }],
+                "salt": "0",
+                "signature": "0x" // placeholder — must be signed via DelegationManager
+            });
+
+            let delegation_str = serde_json::to_string(&delegation_json).unwrap();
+
+            // Validate before storing
+            validate_delegation_json(&delegation_str).expect("Generated delegation failed validation");
+
+            let id = db
+                .add_delegation(environment, puzzle_id, &delegation_str, &prize)
+                .expect("Failed to add delegation");
+
+            println!("Created delegation #{id} for puzzle #{puzzle_id} ({environment})");
+            println!("  Delegator: {:?}", delegator);
+            println!("  Delegate:  {:?}", delegate_addr);
+            println!("  Enforcer:  {}", enforcer);
+            println!("  Prize:     {} ETH", prize);
+            println!("  Terms:     {}", terms_hex);
+            println!();
+            println!("⚠️  NOTE: The delegation signature is a placeholder (0x).");
+            println!("  You must sign this delegation via DelegationManager.delegate()");
+            println!("  on-chain, then update the signature with:");
+            println!("    bear-trap-admin update-delegation --puzzle-id {} --delegation '<updated json>' --prize {}", puzzle_id, prize);
+            println!();
+            println!("Delegation JSON:");
+            println!("{}", serde_json::to_string_pretty(&delegation_json).unwrap());
         }
 
         Commands::MarkSolved { puzzle_id, winner } => {
