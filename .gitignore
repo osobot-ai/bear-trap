@@ -30,3 +30,4 @@ out/
 
 # SQLite database
 data/
+.agent-prompt.md

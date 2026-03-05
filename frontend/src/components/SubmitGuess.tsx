@@ -179,7 +179,7 @@ export function SubmitGuess() {
         terms: (c.terms || "0x") as Hex,
         args: caveatArgs,
       })),
-      salt: delegation.salt as Hex,
+      salt: (delegation.salt.startsWith("0x") ? delegation.salt : ("0x" + BigInt(delegation.salt).toString(16))) as Hex,
       signature: delegation.signature as Hex,
     };
 
