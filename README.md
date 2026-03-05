@@ -204,7 +204,7 @@ bear-trap-admin init
 # Create a puzzle (auto-computes SHA-256 of the answer)
 bear-trap-admin create-puzzle --answer "secret passphrase" --clue-uri "ipfs://..."
 
-# Create an open delegation with all 3 caveat enforcers
+# Create and EIP-712 sign an open delegation with all 3 caveat enforcers
 bear-trap-admin create-delegation \
   --puzzle-id 0 \
   --private-key 0x<delegator_key> \
@@ -213,7 +213,10 @@ bear-trap-admin create-delegation \
   --calldata-enforcer 0x<ExactCalldataEnforcer> \
   --image-id 0x<risc0_image_id> \
   --operator 0x<backend_operator_address> \
-  --prize "0.1"
+  --prize "0.1" \
+  --salt 0 \
+  --chain-id 84532 \
+  --delegation-manager 0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
 
 # Update prize amount (can increase over time)
 bear-trap-admin update-prize --puzzle-id 0 --prize "0.5"
@@ -242,7 +245,10 @@ railway run bear-trap-admin list-puzzles
 ```
 
 > **Note:** `create-delegation` automatically signs the delegation using EIP-712 typed data
-> (matching DelegationManager's signing domain). The signed delegation is ready to use immediately.
+> (matching DelegationManager's signing domain: `name="DelegationManager"`, `version="1"`, `chainId`, `verifyingContract`).
+> The signed delegation is stored and ready to use immediately — no on-chain signing step needed.
+> `--chain-id` defaults to 84532 (Base Sepolia). Use 8453 for Base mainnet.
+> `--salt` defaults to 0. Use unique salts if creating multiple delegations for the same puzzle.
 
 ## Deployment
 
