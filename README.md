@@ -30,6 +30,29 @@ Vercel (Next.js)              Railway (Rust axum)
 4. **Proof Generation**: The backend passes the guess + the correct answer hash (stored server-side in SQLite, never on-chain) to the RISC0 guest program via Boundless. If the guess is wrong, the guest assertion fails and no proof is generated — but the ticket is already burned
 5. **Claim Prize**: If the proof succeeds, the frontend receives the seal + journal + delegation and calls `redeemDelegations()` on the DelegationManager. The ZKPEnforcer verifies the proof on-chain and the ETH prize transfers to the winner
 
+
+### Delegation Structure
+
+Each puzzle uses an **open delegation** (anyone can redeem) with three caveat enforcers:
+
+```
+Delegation {
+  delegate:  0x0000000000000000000000000000000000000a11  (ANY_DELEGATE)
+  delegator: <puzzle creator's wallet>
+  authority: 0xfff...fff  (ROOT_AUTHORITY)
+  caveats: [
+    ZKPEnforcer           — verifies ZK proof + operator attestation
+    NativeTokenTransfer   — limits ETH transfer to prize amount
+    ExactCalldata         — ensures empty calldata (ETH-only)
+  ]
+}
+```
+
+The delegator funds their wallet with the prize ETH. When a player solves the puzzle, they call `redeemDelegations()` which:
+1. ZKPEnforcer checks: valid proof, correct solver, correct puzzle, trusted operator signature
+2. NativeTokenTransferAmountEnforcer checks: transfer ≤ prize amount
+3. ExactCalldataEnforcer checks: calldata is empty (pure ETH transfer)
+
 ### Key Design: Private Answer + On-Chain Ticket Burn
 
 The answer hash is never stored on-chain — it lives only in a SQLite database on the backend. This prevents users from checking their guess offline without paying. Tickets are burned on-chain before proof generation, ensuring every attempt has an economic cost regardless of outcome.
@@ -115,7 +138,7 @@ bear-trap/
 ### Smart Contracts
 
 ```bash
-# Run tests (25 tests)
+# Run tests (40 tests)
 cd contracts && forge test
 
 # Deploy
@@ -151,6 +174,7 @@ Environment variables for the API server:
 | `PINATA_JWT` | For uploading guest ELF to IPFS | (optional) |
 | `BEAR_TRAP_ADDRESS` | Deployed BearTrap contract | (required) |
 | `ENVIRONMENT` | `testnet` or `mainnet` — controls mock proving and DB scoping | `testnet` |
+| `ZKP_ENFORCER_ADDRESS` | Deployed ZKPEnforcer contract | (required for mark-solved) |
 
 ### Frontend (Next.js)
 
@@ -180,17 +204,31 @@ bear-trap-admin init
 # Create a puzzle (auto-computes SHA-256 of the answer)
 bear-trap-admin create-puzzle --answer "secret passphrase" --clue-uri "ipfs://..."
 
-# Add a signed delegation for a puzzle
+# Create and EIP-712 sign an open delegation with all 3 caveat enforcers
+bear-trap-admin create-delegation \
+  --puzzle-id 0 \
+  --private-key 0x<delegator_key> \
+  --enforcer 0x<ZKPEnforcer> \
+  --native-transfer-enforcer 0x<NativeTokenTransferAmountEnforcer> \
+  --calldata-enforcer 0x<ExactCalldataEnforcer> \
+  --image-id 0x<risc0_image_id> \
+  --operator 0x<backend_operator_address> \
+  --prize "0.1" \
+  --salt 0 \
+  --chain-id 84532 \
+  --delegation-manager 0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
+
+# Update prize amount (can increase over time)
+bear-trap-admin update-prize --puzzle-id 0 --prize "0.5"
+
+# Update delegation JSON (e.g., after signing on-chain)
+bear-trap-admin update-prize --puzzle-id 0 --delegation '<signed json>'
+
+# Add a raw signed delegation (alternative to create-delegation)
 bear-trap-admin add-delegation \
   --puzzle-id 0 \
-  --delegation '{"chain":8453,...}' \
+  --delegation '{"delegate":"0x...","delegator":"0x...",...}' \
   --prize "1.0"
-
-# Update the active delegation
-bear-trap-admin update-delegation \
-  --puzzle-id 0 \
-  --delegation '{"chain":8453,...}' \
-  --prize "2.0"
 
 # List all puzzles
 bear-trap-admin list-puzzles
@@ -205,6 +243,12 @@ Via Railway:
 railway run bear-trap-admin create-puzzle --answer "secret" --clue-uri "ipfs://..."
 railway run bear-trap-admin list-puzzles
 ```
+
+> **Note:** `create-delegation` automatically signs the delegation using EIP-712 typed data
+> (matching DelegationManager's signing domain: `name="DelegationManager"`, `version="1"`, `chainId`, `verifyingContract`).
+> The signed delegation is stored and ready to use immediately — no on-chain signing step needed.
+> `--chain-id` defaults to 84532 (Base Sepolia). Use 8453 for Base mainnet.
+> `--salt` defaults to 0. Use unique salts if creating multiple delegations for the same puzzle.
 
 ## Deployment
 
@@ -310,7 +354,7 @@ bear-trap-admin --env testnet list-puzzles
 
 When `ENVIRONMENT=testnet`, the backend skips Boundless SDK and returns mock proofs:
 - Mock seal: 32 zero bytes (accepted by MockRiscZeroVerifier)
-- Mock journal: properly ABI-encoded `(solverAddress, solutionHash)` so ZKPEnforcer can decode it
+- Mock journal: properly ABI-encoded `(solverAddress, solutionHash, puzzleId, operatorSig)` so ZKPEnforcer can decode it
 - The guess hash is still verified locally — wrong guesses still fail
 
 ### Testnet Faucets
@@ -324,9 +368,14 @@ When `ENVIRONMENT=testnet`, the backend skips Boundless SDK and returns mock pro
 1. **Private answers**: Solution hashes are stored in a SQLite database on the backend — never on-chain. Users cannot check guesses offline.
 2. **Front-running protection**: The actual answer is never visible in the mempool or on-chain. Only the ZK proof is submitted.
 3. **Proof bound to solver**: Journal commits the solver's address, preventing proof theft.
-4. **Economic deterrent**: Tickets are burned on-chain by the operator before proof generation begins. Every attempt costs $OSO.
-5. **Single winner**: LimitedCallsEnforcer on the delegation ensures only the first correct solver claims the prize.
-6. **On-chain verification**: Proofs are verified by the Boundless verifier contract via the ZKPEnforcer during delegation redemption.
+4. **Operator attestation**: Backend signs `(solverAddress, puzzleId, solutionHash)` with the operator key. The signature is committed to the journal and verified on-chain via `ECDSA.recover`. Prevents generating valid proofs without going through the backend.
+5. **imageId protection**: The RISC0 guest binary hash (imageId) is committed in delegation terms. Modifying the guest program produces a different imageId, invalidating all existing delegations.
+6. **Economic deterrent**: Tickets are burned on-chain by the operator before proof generation begins. Every attempt costs $OSO.
+7. **Execution mode guards**: ZKPEnforcer enforces `onlySingleCallTypeMode` + `onlyDefaultExecutionMode` — batch and try execution modes are rejected.
+8. **Signature authentication**: `/api/prove` requires an EIP-191 signature proving the caller owns the solver address (prevents ticket griefing).
+9. **Rate limiting**: IP-based rate limiting on `/api/prove` (5 req/min) with proxy-aware IP extraction (X-Forwarded-For).
+10. **Trustless mark-solved**: `/api/mark-solved` accepts a transaction hash, verifies the `ProofVerified` event on-chain, and only then marks the puzzle solved. No authentication needed — the on-chain event is the proof.
+11. **Prize limits**: `NativeTokenTransferAmountEnforcer` caps the ETH transfer to the prize amount. `ExactCalldataEnforcer` ensures empty calldata (ETH-only transfer, no contract calls).
 
 ## References
 

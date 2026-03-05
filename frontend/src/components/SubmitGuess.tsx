@@ -174,15 +174,18 @@ export function SubmitGuess() {
       delegate: delegation.delegate as Hex,
       delegator: delegation.delegator as Hex,
       authority: delegation.authority as Hex,
-      caveats: delegation.caveats.map((c: DelegationCaveat) => ({
+      caveats: delegation.caveats.map((c: DelegationCaveat, index: number) => ({
         enforcer: c.enforcer as Hex,
         terms: (c.terms || "0x") as Hex,
-        args: caveatArgs,
+        // Only the ZKPEnforcer caveat (first) gets seal+journal as args
+        // Other caveats (NativeTokenTransferAmount, ExactCalldata) use empty args
+        args: index === 0 ? caveatArgs : ("0x" as Hex),
       })),
       salt: (delegation.salt.startsWith("0x") ? delegation.salt : ("0x" + BigInt(delegation.salt).toString(16))) as Hex,
       signature: delegation.signature as Hex,
     };
 
+    // TODO: execution value should match the prize amount from puzzle data
     const execution = createExecution({
       target: address,
       value: BigInt(0),

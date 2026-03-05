@@ -13,6 +13,8 @@ shared = { workspace = true }
 clap = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+alloy = { workspace = true, features = ["signers", "signer-local"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 shared = { workspace = true }

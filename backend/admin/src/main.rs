@@ -7,6 +7,11 @@ use std::env;
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use shared::{Db, validate_delegation_json};
+use alloy::primitives::{Address, B256, U256, keccak256};
+use alloy::sol;
+use alloy::sol_types::SolStruct;
+use alloy::signers::SignerSync;
+use alloy::signers::local::PrivateKeySigner;
 
 #[derive(Parser)]
 #[command(name = "bear-trap-admin")]
@@ -69,6 +74,72 @@ enum Commands {
     /// List all puzzles with their active delegation prize.
     ListPuzzles,
 
+    /// Create and sign a delegation for a puzzle (via DelegationManager off-chain signing).
+    /// Generates an open delegation (ANY_DELEGATE) with three caveats:
+    /// - ZKPEnforcer: ZK proof verification + operator attestation
+    /// - NativeTokenTransferAmountEnforcer: limits ETH transfer to prize amount
+    /// - ExactCalldataEnforcer: ensures calldata is empty (ETH-only transfer)
+    CreateDelegation {
+        /// Puzzle ID for the delegation.
+        #[arg(long)]
+        puzzle_id: i64,
+
+        /// Delegator private key (hex). The wallet funding the prize.
+        #[arg(long)]
+        private_key: String,
+
+        /// ZKPEnforcer contract address.
+        #[arg(long)]
+        enforcer: String,
+
+        /// NativeTokenTransferAmountEnforcer contract address.
+        #[arg(long)]
+        native_transfer_enforcer: String,
+
+        /// ExactCalldataEnforcer contract address.
+        #[arg(long)]
+        calldata_enforcer: String,
+
+        /// RISC0 image ID (bytes32 hex).
+        #[arg(long)]
+        image_id: String,
+
+        /// Operator address (backend signer).
+        #[arg(long)]
+        operator: String,
+
+        /// Prize amount in ETH (e.g., "0.01").
+        #[arg(long)]
+        prize: String,
+
+        /// Chain ID (default: 84532 for Base Sepolia).
+        #[arg(long, default_value = "84532")]
+        chain_id: u64,
+
+        /// DelegationManager address (default: v1.3.0 canonical address).
+        #[arg(long, default_value = "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3")]
+        delegation_manager: String,
+
+        /// Salt for the delegation (default: 0).
+        #[arg(long, default_value = "0")]
+        salt: String,
+    },
+
+    /// Update the prize amount and/or delegation JSON for an existing puzzle delegation.
+    UpdatePrize {
+        /// Puzzle ID to update.
+        #[arg(long)]
+        puzzle_id: i64,
+
+        /// New prize amount in ETH.
+        #[arg(long)]
+        prize: Option<String>,
+
+        /// New delegation JSON (optional, to update the full delegation).
+        #[arg(long)]
+        delegation: Option<String>,
+    },
+
     /// Mark a puzzle as solved with a winner address.
     MarkSolved {
         /// Puzzle ID to mark as solved.
@@ -79,6 +150,24 @@ enum Commands {
         #[arg(long)]
         winner: String,
     },
+}
+
+// EIP-712 types matching DelegationManager's signing domain
+sol! {
+    #[derive(Default)]
+    struct Caveat {
+        address enforcer;
+        bytes terms;
+    }
+
+    #[derive(Default)]
+    struct Delegation {
+        address delegate;
+        address delegator;
+        bytes32 authority;
+        Caveat[] caveats;
+        uint256 salt;
+    }
 }
 
 fn get_db() -> Db {
@@ -96,6 +185,25 @@ fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     format!("0x{}", hex::encode(hasher.finalize()))
+}
+
+fn parse_eth_to_wei(eth: &str) -> U256 {
+    let parts: Vec<&str> = eth.split('.').collect();
+    match parts.len() {
+        1 => {
+            let whole: u128 = parts[0].parse().expect("Invalid ETH amount");
+            U256::from(whole) * U256::from(10u64).pow(U256::from(18))
+        }
+        2 => {
+            let whole: u128 = parts[0].parse().expect("Invalid ETH amount");
+            let decimal_str = parts[1];
+            let decimal_len = decimal_str.len().min(18);
+            let padded = format!("{:0<18}", &decimal_str[..decimal_len]);
+            let decimal: u128 = padded.parse().expect("Invalid decimal in ETH amount");
+            U256::from(whole) * U256::from(10u64).pow(U256::from(18)) + U256::from(decimal)
+        }
+        _ => panic!("Invalid ETH amount format"),
+    }
 }
 
 fn main() {
@@ -186,7 +294,193 @@ fn main() {
             println!();
         }
 
-        Commands::MarkSolved { puzzle_id, winner } => {
+        Commands::CreateDelegation {
+            puzzle_id,
+            private_key,
+            enforcer,
+            native_transfer_enforcer,
+            calldata_enforcer,
+            image_id,
+            operator,
+            prize,
+            chain_id,
+            delegation_manager,
+            salt,
+        } => {
+            let db = get_db();
+            db.init().expect("Failed to initialize database");
+
+            let signer: PrivateKeySigner = private_key
+                .parse()
+                .expect("Invalid private key");
+            let delegator = signer.address();
+
+            // ANY_DELEGATE for open delegation
+            let delegate_addr: Address = "0x0000000000000000000000000000000000000a11"
+                .parse()
+                .unwrap();
+
+            // ROOT_AUTHORITY
+            let authority = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+            // === Caveat 1: ZKPEnforcer ===
+            let image_id_bytes: B256 = image_id.parse().expect("Invalid image ID");
+            let puzzle_id_u256 = U256::from(puzzle_id as u64);
+            let operator_addr: Address = operator.parse().expect("Invalid operator address");
+
+            let mut zkp_terms = Vec::with_capacity(96);
+            zkp_terms.extend_from_slice(image_id_bytes.as_slice());
+            zkp_terms.extend_from_slice(&puzzle_id_u256.to_be_bytes::<32>());
+            let mut addr_padded = [0u8; 32];
+            addr_padded[12..].copy_from_slice(operator_addr.as_slice());
+            zkp_terms.extend_from_slice(&addr_padded);
+            let zkp_terms_hex = format!("0x{}", hex::encode(&zkp_terms));
+
+            // === Caveat 2: NativeTokenTransferAmountEnforcer ===
+            let prize_wei = parse_eth_to_wei(&prize);
+            let mut native_terms = Vec::with_capacity(32);
+            native_terms.extend_from_slice(&prize_wei.to_be_bytes::<32>());
+            let native_terms_hex = format!("0x{}", hex::encode(&native_terms));
+
+            // === Caveat 3: ExactCalldataEnforcer ===
+            let calldata_terms_hex = "0x";
+
+            let enforcer_addr: Address = enforcer.parse().expect("Invalid ZKPEnforcer address");
+            let native_enforcer_addr: Address = native_transfer_enforcer.parse().expect("Invalid NativeTokenTransferAmountEnforcer address");
+            let calldata_enforcer_addr: Address = calldata_enforcer.parse().expect("Invalid ExactCalldataEnforcer address");
+
+            let salt_value = U256::from_str_radix(
+                salt.strip_prefix("0x").unwrap_or(&salt), 16
+            ).unwrap_or_else(|_| salt.parse::<u64>().map(U256::from).expect("Invalid salt"));
+
+            let delegation_json = serde_json::json!({
+                "delegate": format!("{:?}", delegate_addr),
+                "delegator": format!("{:?}", delegator),
+                "authority": authority,
+                "caveats": [
+                    {
+                        "enforcer": format!("{:?}", enforcer_addr),
+                        "terms": zkp_terms_hex,
+                        "args": "0x"
+                    },
+                    {
+                        "enforcer": format!("{:?}", native_enforcer_addr),
+                        "terms": native_terms_hex,
+                        "args": "0x"
+                    },
+                    {
+                        "enforcer": format!("{:?}", calldata_enforcer_addr),
+                        "terms": calldata_terms_hex,
+                        "args": "0x"
+                    }
+                ],
+                "salt": format!("0x{:064x}", salt_value),
+                "signature": "0x"
+            });
+
+            // EIP-712 sign the delegation
+            let delegation_manager_addr: Address = delegation_manager
+                .parse()
+                .expect("Invalid DelegationManager address");
+
+            // Build the EIP-712 domain
+            let domain = alloy::sol_types::Eip712Domain {
+                name: Some("DelegationManager".into()),
+                version: Some("1".into()),
+                chain_id: Some(U256::from(chain_id)),
+                verifying_contract: Some(delegation_manager_addr),
+                salt: None,
+            };
+
+            // Build the Delegation struct for signing (excludes signature and args per spec)
+            let delegation_for_signing = Delegation {
+                delegate: delegate_addr,
+                delegator: delegator,
+                authority: B256::from_slice(&hex::decode("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff").unwrap()),
+                caveats: vec![
+                    Caveat {
+                        enforcer: enforcer_addr,
+                        terms: hex::decode(zkp_terms_hex.strip_prefix("0x").unwrap()).unwrap().into(),
+                    },
+                    Caveat {
+                        enforcer: native_enforcer_addr,
+                        terms: hex::decode(native_terms_hex.strip_prefix("0x").unwrap()).unwrap().into(),
+                    },
+                    Caveat {
+                        enforcer: calldata_enforcer_addr,
+                        terms: alloy::primitives::Bytes::new(), // empty calldata
+                    },
+                ],
+                salt: salt_value,
+            };
+
+            // Compute the EIP-712 signing hash
+            let signing_hash = delegation_for_signing.eip712_signing_hash(&domain);
+            let sig = signer.sign_hash_sync(&signing_hash)
+                .expect("Failed to sign delegation");
+            let sig_hex = format!("0x{}", hex::encode(sig.as_bytes()));
+
+            // Update the JSON with the real signature
+            let delegation_json = {
+                let mut d = delegation_json;
+                d["signature"] = serde_json::Value::String(sig_hex.clone());
+                d
+            };
+
+            let delegation_str = serde_json::to_string(&delegation_json).unwrap();
+            validate_delegation_json(&delegation_str).expect("Generated delegation failed validation");
+
+            let id = db
+                .add_delegation(environment, puzzle_id, &delegation_str, &prize)
+                .expect("Failed to add delegation");
+
+            println!("Created and signed open delegation #{id} for puzzle #{puzzle_id} ({environment})");
+            println!("  Delegator:  {:?}", delegator);
+            println!("  Delegate:   ANY_DELEGATE (0x...0a11)");
+            println!("  Prize:      {} ETH ({} wei)", prize, prize_wei);
+            println!("  Signature:  {}...{}", &sig_hex[..10], &sig_hex[sig_hex.len()-8..]);
+            println!("  Caveats:");
+            println!("    1. ZKPEnforcer:                       {:?}", enforcer_addr);
+            println!("    2. NativeTokenTransferAmountEnforcer: {:?}", native_enforcer_addr);
+            println!("    3. ExactCalldataEnforcer:              {:?}", calldata_enforcer_addr);
+            println!();
+            println!("Delegation JSON:");
+            println!("{}", serde_json::to_string_pretty(&delegation_json).unwrap());
+        }
+
+        Commands::UpdatePrize {
+            puzzle_id,
+            prize,
+            delegation,
+        } => {
+            let db = get_db();
+            db.init().expect("Failed to initialize database");
+
+            if let Some(ref d) = delegation {
+                validate_delegation_json(d).expect("Delegation JSON validation failed");
+            }
+
+            if let (Some(new_prize), Some(new_delegation)) = (&prize, &delegation) {
+                db.update_delegation(environment, puzzle_id, new_delegation, new_prize)
+                    .expect("Failed to update delegation");
+                println!("Updated delegation AND prize for puzzle #{puzzle_id} ({environment}) to {} ETH", new_prize);
+            } else if let Some(new_prize) = &prize {
+                db.update_prize(environment, puzzle_id, new_prize)
+                    .expect("Failed to update prize");
+                println!("Updated prize for puzzle #{puzzle_id} ({environment}) to {} ETH", new_prize);
+            } else if let Some(new_delegation) = &delegation {
+                let current = db.get_active_delegation(environment, puzzle_id)
+                    .expect("Failed to get current delegation")
+                    .expect("No active delegation found for this puzzle");
+                db.update_delegation(environment, puzzle_id, new_delegation, &current.prize_eth)
+                    .expect("Failed to update delegation");
+                println!("Updated delegation JSON for puzzle #{puzzle_id} ({environment})");
+            } else {
+                println!("Nothing to update. Provide --prize and/or --delegation.");
+            }
+        }
+
+                Commands::MarkSolved { puzzle_id, winner } => {
             let db = get_db();
             db.mark_solved(environment, puzzle_id, &winner)
                 .expect("Failed to mark puzzle as solved");
