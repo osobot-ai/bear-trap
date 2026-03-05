@@ -119,6 +119,10 @@ enum Commands {
         /// DelegationManager address (default: v1.3.0 canonical address).
         #[arg(long, default_value = "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3")]
         delegation_manager: String,
+
+        /// Salt for the delegation (default: 0).
+        #[arg(long, default_value = "0")]
+        salt: String,
     },
 
     /// Update the prize amount and/or delegation JSON for an existing puzzle delegation.
@@ -301,6 +305,7 @@ fn main() {
             prize,
             chain_id,
             delegation_manager,
+            salt,
         } => {
             let db = get_db();
             db.init().expect("Failed to initialize database");
@@ -344,6 +349,10 @@ fn main() {
             let native_enforcer_addr: Address = native_transfer_enforcer.parse().expect("Invalid NativeTokenTransferAmountEnforcer address");
             let calldata_enforcer_addr: Address = calldata_enforcer.parse().expect("Invalid ExactCalldataEnforcer address");
 
+            let salt_value = U256::from_str_radix(
+                salt.strip_prefix("0x").unwrap_or(&salt), 16
+            ).unwrap_or_else(|_| salt.parse::<u64>().map(U256::from).expect("Invalid salt"));
+
             let delegation_json = serde_json::json!({
                 "delegate": format!("{:?}", delegate_addr),
                 "delegator": format!("{:?}", delegator),
@@ -365,7 +374,7 @@ fn main() {
                         "args": "0x"
                     }
                 ],
-                "salt": "0",
+                "salt": format!("0x{:064x}", salt_value),
                 "signature": "0x"
             });
 
@@ -402,7 +411,7 @@ fn main() {
                         terms: alloy::primitives::Bytes::new(), // empty calldata
                     },
                 ],
-                salt: U256::ZERO,
+                salt: salt_value,
             };
 
             // Compute the EIP-712 signing hash
