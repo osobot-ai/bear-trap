@@ -241,9 +241,8 @@ railway run bear-trap-admin create-puzzle --answer "secret" --clue-uri "ipfs://.
 railway run bear-trap-admin list-puzzles
 ```
 
-> **Note:** `create-delegation` generates a delegation with a placeholder signature (`0x`).
-> You must sign the delegation via `DelegationManager.delegate()` on-chain, then update
-> the stored delegation JSON with the real signature using `update-prize --delegation`.
+> **Note:** `create-delegation` automatically signs the delegation using EIP-712 typed data
+> (matching DelegationManager's signing domain). The signed delegation is ready to use immediately.
 
 ## Deployment
 

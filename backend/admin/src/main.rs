@@ -8,6 +8,9 @@ use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use shared::{Db, validate_delegation_json};
 use alloy::primitives::{Address, B256, U256, keccak256};
+use alloy::sol;
+use alloy::sol_types::SolStruct;
+use alloy::signers::SignerSync;
 use alloy::signers::local::PrivateKeySigner;
 
 #[derive(Parser)]
@@ -108,6 +111,14 @@ enum Commands {
         /// Prize amount in ETH (e.g., "0.01").
         #[arg(long)]
         prize: String,
+
+        /// Chain ID (default: 84532 for Base Sepolia).
+        #[arg(long, default_value = "84532")]
+        chain_id: u64,
+
+        /// DelegationManager address (default: v1.3.0 canonical address).
+        #[arg(long, default_value = "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3")]
+        delegation_manager: String,
     },
 
     /// Update the prize amount and/or delegation JSON for an existing puzzle delegation.
@@ -135,6 +146,24 @@ enum Commands {
         #[arg(long)]
         winner: String,
     },
+}
+
+// EIP-712 types matching DelegationManager's signing domain
+sol! {
+    #[derive(Default)]
+    struct Caveat {
+        address enforcer;
+        bytes terms;
+    }
+
+    #[derive(Default)]
+    struct Delegation {
+        address delegate;
+        address delegator;
+        bytes32 authority;
+        Caveat[] caveats;
+        uint256 salt;
+    }
 }
 
 fn get_db() -> Db {
@@ -270,6 +299,8 @@ fn main() {
             image_id,
             operator,
             prize,
+            chain_id,
+            delegation_manager,
         } => {
             let db = get_db();
             db.init().expect("Failed to initialize database");
@@ -338,6 +369,55 @@ fn main() {
                 "signature": "0x"
             });
 
+            // EIP-712 sign the delegation
+            let delegation_manager_addr: Address = delegation_manager
+                .parse()
+                .expect("Invalid DelegationManager address");
+
+            // Build the EIP-712 domain
+            let domain = alloy::sol_types::Eip712Domain {
+                name: Some("DelegationManager".into()),
+                version: Some("1".into()),
+                chain_id: Some(U256::from(chain_id)),
+                verifying_contract: Some(delegation_manager_addr),
+                salt: None,
+            };
+
+            // Build the Delegation struct for signing (excludes signature and args per spec)
+            let delegation_for_signing = Delegation {
+                delegate: delegate_addr,
+                delegator: delegator,
+                authority: B256::from_slice(&hex::decode("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff").unwrap()),
+                caveats: vec![
+                    Caveat {
+                        enforcer: enforcer_addr,
+                        terms: hex::decode(zkp_terms_hex.strip_prefix("0x").unwrap()).unwrap().into(),
+                    },
+                    Caveat {
+                        enforcer: native_enforcer_addr,
+                        terms: hex::decode(native_terms_hex.strip_prefix("0x").unwrap()).unwrap().into(),
+                    },
+                    Caveat {
+                        enforcer: calldata_enforcer_addr,
+                        terms: alloy::primitives::Bytes::new(), // empty calldata
+                    },
+                ],
+                salt: U256::ZERO,
+            };
+
+            // Compute the EIP-712 signing hash
+            let signing_hash = delegation_for_signing.eip712_signing_hash(&domain);
+            let sig = signer.sign_hash_sync(&signing_hash)
+                .expect("Failed to sign delegation");
+            let sig_hex = format!("0x{}", hex::encode(sig.as_bytes()));
+
+            // Update the JSON with the real signature
+            let delegation_json = {
+                let mut d = delegation_json;
+                d["signature"] = serde_json::Value::String(sig_hex.clone());
+                d
+            };
+
             let delegation_str = serde_json::to_string(&delegation_json).unwrap();
             validate_delegation_json(&delegation_str).expect("Generated delegation failed validation");
 
@@ -345,18 +425,15 @@ fn main() {
                 .add_delegation(environment, puzzle_id, &delegation_str, &prize)
                 .expect("Failed to add delegation");
 
-            println!("Created open delegation #{id} for puzzle #{puzzle_id} ({environment})");
+            println!("Created and signed open delegation #{id} for puzzle #{puzzle_id} ({environment})");
             println!("  Delegator:  {:?}", delegator);
             println!("  Delegate:   ANY_DELEGATE (0x...0a11)");
             println!("  Prize:      {} ETH ({} wei)", prize, prize_wei);
+            println!("  Signature:  {}...{}", &sig_hex[..10], &sig_hex[sig_hex.len()-8..]);
             println!("  Caveats:");
             println!("    1. ZKPEnforcer:                       {:?}", enforcer_addr);
             println!("    2. NativeTokenTransferAmountEnforcer: {:?}", native_enforcer_addr);
             println!("    3. ExactCalldataEnforcer:              {:?}", calldata_enforcer_addr);
-            println!();
-            println!("NOTE: Delegation signature is a placeholder (0x).");
-            println!("Sign via DelegationManager on-chain, then update with:");
-            println!("  bear-trap-admin update-delegation --puzzle-id {} --delegation '<signed json>' --prize {}", puzzle_id, prize);
             println!();
             println!("Delegation JSON:");
             println!("{}", serde_json::to_string_pretty(&delegation_json).unwrap());
