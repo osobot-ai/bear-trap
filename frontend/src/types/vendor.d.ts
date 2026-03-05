@@ -86,6 +86,18 @@ declare module "wagmi" {
     error: Error | null;
   };
 
+  export function useSendTransaction(): {
+    data: `0x${string}` | undefined;
+    sendTransaction: (config: {
+      to: `0x${string}`;
+      data?: `0x${string}`;
+      value?: bigint;
+      chainId?: number;
+    }) => void;
+    isPending: boolean;
+    error: Error | null;
+  };
+
   export function useWaitForTransactionReceipt(config: {
     hash: `0x${string}` | undefined;
   }): {
@@ -131,6 +143,58 @@ declare module "wagmi/chains" {
     id: number;
     name: string;
     [key: string]: unknown;
+  };
+}
+
+declare module "@metamask/smart-accounts-kit" {
+  import type { Hex, Address } from "viem";
+
+  export type Caveat = {
+    enforcer: Hex;
+    terms: Hex;
+    args: Hex;
+  };
+
+  export type Delegation = {
+    delegate: Hex;
+    delegator: Hex;
+    authority: Hex;
+    caveats: Caveat[];
+    salt: Hex;
+    signature: Hex;
+  };
+
+  export type ExecutionStruct = {
+    target: Address;
+    value: bigint;
+    callData: Hex;
+  };
+
+  export type CreateExecutionArgs = {
+    target: Address;
+    value?: bigint;
+    callData?: Hex;
+  };
+
+  export const createExecution: (args: CreateExecutionArgs) => ExecutionStruct;
+
+  export enum ExecutionMode {
+    SingleDefault = "0x0000000000000000000000000000000000000000000000000000000000000000",
+    SingleTry = "0x0001000000000000000000000000000000000000000000000000000000000000",
+    BatchDefault = "0x0100000000000000000000000000000000000000000000000000000000000000",
+    BatchTry = "0x0101000000000000000000000000000000000000000000000000000000000000",
+  }
+
+  export const contracts: {
+    DelegationManager: {
+      encode: {
+        redeemDelegations: (params: {
+          delegations: Delegation[][];
+          modes: ExecutionMode[];
+          executions: ExecutionStruct[][];
+        }) => Hex;
+      };
+    };
   };
 }
 

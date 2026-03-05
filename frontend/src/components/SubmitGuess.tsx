@@ -5,12 +5,17 @@ import {
   useAccount,
   useReadContract,
   useSignMessage,
-  useWriteContract,
+  useSendTransaction,
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { encodeAbiParameters, type Hex } from "viem";
+import {
+  createExecution,
+  ExecutionMode,
+  contracts,
+} from "@metamask/smart-accounts-kit";
+import type { Delegation as SdkDelegation } from "@metamask/smart-accounts-kit";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
-import { delegationManagerAbi } from "@/lib/abi/delegationManager";
 import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV } from "@/lib/contracts";
 
 const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
@@ -74,13 +79,12 @@ export function SubmitGuess() {
     query: { enabled: !!address },
   });
 
-  // Write: redeemDelegations on DelegationManager
   const {
     data: redeemHash,
-    writeContract: redeemDelegations,
+    sendTransaction: sendRedeemTx,
     isPending: isRedeeming,
     error: redeemError,
-  } = useWriteContract();
+  } = useSendTransaction();
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({ hash: redeemHash });
@@ -154,7 +158,6 @@ export function SubmitGuess() {
     }
   }, [passphrase, address, puzzleId, signMessageAsync, refetchTicketBalance]);
 
-  // Step 2: Submit redeemDelegations with the proof
   const handleRedeemPrize = useCallback(() => {
     if (!proofData || !address || !proofData.delegation) return;
 
@@ -162,72 +165,44 @@ export function SubmitGuess() {
     const journal = proofData.journal as Hex;
     const delegation = proofData.delegation;
 
-    const delegationTuple = {
-      delegate: delegation.delegate as `0x${string}`,
-      delegator: delegation.delegator as `0x${string}`,
-      authority: delegation.authority as `0x${string}`,
-      caveats: delegation.caveats.map((c) => ({
-        enforcer: c.enforcer as `0x${string}`,
-        terms: (c.terms || "0x") as Hex,
-        args: (c.args || "0x") as Hex,
-      })),
-      salt: BigInt(delegation.salt),
-      signature: delegation.signature as Hex,
-    };
-
     const caveatArgs = encodeAbiParameters(
       [{ type: "bytes" }, { type: "bytes" }],
       [seal, journal]
     );
 
-    // DelegationManager expects each permissionContext to be abi.encode(Delegation[], bytes[])
-    const permissionContext = encodeAbiParameters(
-      [
-        {
-          type: "tuple[]",
-          components: [
-            { name: "delegate", type: "address" },
-            { name: "delegator", type: "address" },
-            { name: "authority", type: "bytes32" },
-            {
-              name: "caveats",
-              type: "tuple[]",
-              components: [
-                { name: "enforcer", type: "address" },
-                { name: "terms", type: "bytes" },
-                { name: "args", type: "bytes" },
-              ],
-            },
-            { name: "salt", type: "uint256" },
-            { name: "signature", type: "bytes" },
-          ],
-        },
-        { type: "bytes[]" },
-      ],
-      [[delegationTuple], [caveatArgs]]
-    );
+    const signedDelegation: SdkDelegation = {
+      delegate: delegation.delegate as Hex,
+      delegator: delegation.delegator as Hex,
+      authority: delegation.authority as Hex,
+      caveats: delegation.caveats.map((c: DelegationCaveat) => ({
+        enforcer: c.enforcer as Hex,
+        terms: (c.terms || "0x") as Hex,
+        args: caveatArgs,
+      })),
+      salt: delegation.salt as Hex,
+      signature: delegation.signature as Hex,
+    };
 
-    const permissionContexts: Hex[] = [permissionContext];
+    const execution = createExecution({
+      target: address,
+      value: BigInt(0),
+      callData: "0x" as Hex,
+    });
 
-    const defaultMode =
-      "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
+    const redeemCalldata = contracts.DelegationManager.encode.redeemDelegations({
+      delegations: [[signedDelegation]],
+      modes: [ExecutionMode.SingleDefault],
+      executions: [[execution]],
+    });
 
-    // TODO: executionCallData value should match the delegation's prize amount
-    const executionCallData = encodeAbiParameters(
-      [{ type: "address" }, { type: "uint256" }, { type: "bytes" }],
-      [address, BigInt(0), "0x" as Hex]
-    );
-
-    redeemDelegations({
-      address: DELEGATION_MANAGER_ADDRESS,
-      abi: delegationManagerAbi,
-      functionName: "redeemDelegations",
-      args: [permissionContexts, [defaultMode], [executionCallData]],
+    sendRedeemTx({
+      to: DELEGATION_MANAGER_ADDRESS,
+      data: redeemCalldata,
       chainId: BASE_CHAIN_ID,
     });
 
     setStep("confirming");
-  }, [proofData, address, redeemDelegations]);
+  }, [proofData, address, sendRedeemTx]);
 
   // Reset flow
   const handleReset = useCallback(() => {
