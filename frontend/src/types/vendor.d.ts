@@ -146,58 +146,6 @@ declare module "wagmi/chains" {
   };
 }
 
-declare module "@metamask/smart-accounts-kit" {
-  import type { Hex, Address } from "viem";
-
-  export type Caveat = {
-    enforcer: Hex;
-    terms: Hex;
-    args: Hex;
-  };
-
-  export type Delegation = {
-    delegate: Hex;
-    delegator: Hex;
-    authority: Hex;
-    caveats: Caveat[];
-    salt: Hex;
-    signature: Hex;
-  };
-
-  export type ExecutionStruct = {
-    target: Address;
-    value: bigint;
-    callData: Hex;
-  };
-
-  export type CreateExecutionArgs = {
-    target: Address;
-    value?: bigint;
-    callData?: Hex;
-  };
-
-  export const createExecution: (args: CreateExecutionArgs) => ExecutionStruct;
-
-  export enum ExecutionMode {
-    SingleDefault = "0x0000000000000000000000000000000000000000000000000000000000000000",
-    SingleTry = "0x0001000000000000000000000000000000000000000000000000000000000000",
-    BatchDefault = "0x0100000000000000000000000000000000000000000000000000000000000000",
-    BatchTry = "0x0101000000000000000000000000000000000000000000000000000000000000",
-  }
-
-  export const contracts: {
-    DelegationManager: {
-      encode: {
-        redeemDelegations: (params: {
-          delegations: Delegation[][];
-          modes: ExecutionMode[];
-          executions: ExecutionStruct[][];
-        }) => Hex;
-      };
-    };
-  };
-}
-
 declare module "connectkit" {
   import type { ReactNode } from "react";
 
