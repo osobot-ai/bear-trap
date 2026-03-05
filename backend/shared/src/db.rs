@@ -231,6 +231,19 @@ impl Db {
         Ok(())
     }
 
+    /// Update only the prize amount for the active delegation of a puzzle.
+    pub fn update_prize(&self, env: &str, puzzle_id: i64, prize_eth: &str) -> Result<()> {
+        let updated = self.conn.execute(
+            "UPDATE delegations SET prize_eth = ?1, updated_at = CURRENT_TIMESTAMP
+             WHERE puzzle_id = ?2 AND active = 1 AND environment = ?3",
+            params![prize_eth, puzzle_id, env],
+        )?;
+        if updated == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
     /// Get the currently active delegation for a puzzle, scoped to environment.
     pub fn get_active_delegation(&self, env: &str, puzzle_id: i64) -> Result<Option<Delegation>> {
         let mut stmt = self.conn.prepare(
