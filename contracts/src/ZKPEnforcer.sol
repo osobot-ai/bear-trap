@@ -4,6 +4,7 @@ pragma solidity 0.8.23;
 import {CaveatEnforcer} from "delegation-framework/enforcers/CaveatEnforcer.sol";
 import {ModeCode} from "delegation-framework/utils/Types.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
+import {ECDSA} from "openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /// @title ZKPEnforcer
 /// @author Bear Trap
@@ -92,20 +93,7 @@ contract ZKPEnforcer is CaveatEnforcer {
         address operatorAddress
     ) internal pure {
         bytes32 messageHash = keccak256(abi.encodePacked(solverAddress, puzzleId, solutionHash));
-
-        require(operatorSig.length == 65, "Invalid operator signature length");
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(operatorSig, 32))
-            s := mload(add(operatorSig, 64))
-            v := byte(0, mload(add(operatorSig, 96)))
-        }
-        if (v < 27) v += 27;
-
-        address recovered = ecrecover(messageHash, v, r, s);
-        require(recovered != address(0), "ecrecover failed");
+        address recovered = ECDSA.recover(messageHash, operatorSig);
         if (recovered != operatorAddress) revert OperatorMismatch();
     }
 }
