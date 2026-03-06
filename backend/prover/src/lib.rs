@@ -271,10 +271,23 @@ pub async fn generate_proof(
     tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
     tracing::info!("Storage config: uploader={:?}, pinata_jwt_set={}", storage_config.storage_uploader, config.pinata_jwt.is_some());
 
+    // Parse image ID from ImageID.sol constant
+    let image_id_hex = "8da19e69de35e4e648d8ca7e6779069b50c09e9241ddd8cac6a6a199d0c7e8ed";
+    let image_id_bytes: [u8; 32] = hex::decode(image_id_hex)
+        .expect("Invalid image ID hex")
+        .try_into()
+        .expect("Image ID must be 32 bytes");
+
+    // Set cycles + journal + image_id to skip preflight execution.
+    // The Boundless prover will re-execute and compute the real values.
+    // We use a generous cycle estimate; the market auction handles pricing.
     let request = client
         .new_request()
         .with_program(guest_elf)
-        .with_stdin(encoded_input);
+        .with_stdin(encoded_input)
+        .with_image_id(risc0_zkvm::sha::Digest::from(image_id_bytes))
+        .with_cycles(1 << 24)
+        .with_journal(vec![]);
 
     // Try offchain first, fall back to onchain if 403/unavailable
     let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
