@@ -204,6 +204,7 @@ pub async fn generate_proof(
     operator_signer: &PrivateKeySigner,
 ) -> Result<ProofResult> {
     use alloy_primitives::{Address, FixedBytes, U256};
+    use std::error::Error as StdError;
     use alloy_sol_types::{sol, SolValue};
     use boundless_market::client::Client;
     use boundless_market::storage::{StorageUploaderConfig, StorageUploaderType};
@@ -274,7 +275,12 @@ pub async fn generate_proof(
         .with_program(guest_elf)
         .with_stdin(encoded_input);
 
-    let (request_id, expires_at) = client.submit(request).await?;
+    let (request_id, expires_at) = client.submit(request).await
+        .map_err(|e| {
+            tracing::error!("Boundless submit failed: {:?}", e);
+            tracing::error!("Boundless submit error source: {:?}", e.source());
+            e
+        })?;
 
     tracing::info!(
         "Proof request submitted: id={:x}, expires_at={}",
