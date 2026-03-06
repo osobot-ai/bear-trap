@@ -15,8 +15,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use alloy_primitives::{Address, FixedBytes, Keccak256, B256, U256};
+use alloy_primitives::{Address, Keccak256, B256};
 use alloy_sol_types::{sol, SolValue};
+use risc0_zkvm::guest::env::Read as _;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use risc0_zkvm::guest::env;
 use sha2::{Digest, Sha256};
@@ -47,7 +48,7 @@ fn main() {
     env::stdin().read_to_end(&mut input_bytes).unwrap();
 
     // Decode the ABI-encoded input
-    let input = PuzzleInput::abi_decode(&input_bytes, true).unwrap();
+    let input = PuzzleInput::abi_decode(&input_bytes).unwrap();
 
     // ── Step 1: Verify operator signature ────────────────────
     // The operator signs keccak256(abi.encodePacked(solverAddress, puzzleId, expectedHash))
