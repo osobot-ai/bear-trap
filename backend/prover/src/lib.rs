@@ -162,7 +162,7 @@ fn encode_journal(solver_address: &str, solution_hash: &str, puzzle_id: u64, ope
 
 fn load_guest_elf() -> Result<Vec<u8>> {
     const LOCAL_DEV_PATH: &str =
-        "guests/puzzle-solver/target/riscv-guest/riscv32im-risc0-zkvm-elf/release/puzzle-solver";
+        "guests/puzzle-solver/target/riscv32im-risc0-zkvm-elf/docker/puzzle-solver.bin";
     const DOCKER_PATH: &str = "/app/puzzle-solver.elf";
 
     let paths: Vec<(String, &str)> = if let Ok(env_path) = std::env::var("GUEST_ELF_PATH") {

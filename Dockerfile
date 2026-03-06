@@ -13,7 +13,7 @@ COPY --from=builder /app/backend/target/release/bear-trap-admin /usr/local/bin/
 # Guest ELF must be pre-built before `docker build`.
 # Build it with: cd guests/puzzle-solver && cargo build --release --target riscv32im-risc0-zkvm-elf
 # Or use the risc0 toolchain: rzup && cargo risczero build --manifest-path guests/puzzle-solver/Cargo.toml
-COPY guests/puzzle-solver/target/riscv-guest/riscv32im-risc0-zkvm-elf/release/puzzle-solver /app/puzzle-solver.elf
+COPY guests/puzzle-solver/target/riscv32im-risc0-zkvm-elf/docker/puzzle-solver.bin /app/puzzle-solver.elf
 RUN mkdir -p /data
 ENV DATABASE_PATH=/data/puzzles.db
 EXPOSE 3001
