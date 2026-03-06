@@ -10,18 +10,15 @@
 // Public outputs (journal):   ABI-encoded PuzzleOutput
 
 #![no_main]
-#![no_std]
 
-extern crate alloc;
-
-use alloc::vec::Vec;
+use std::io::Read;
 use alloy_primitives::{Address, Keccak256, B256};
 use alloy_sol_types::{sol, SolValue};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use risc0_zkvm::guest::env;
 use sha2::{Digest, Sha256};
 
-risc0_zkvm::guest::entry!(main);
+risc0_zkvm::entry!(main);
 
 sol! {
     /// Input structure: guess + solver identity + expected hash + operator attestation
@@ -44,9 +41,7 @@ sol! {
 }
 
 fn main() {
-    // Read ABI-encoded input from the host via stdin
-    use std::io::Read;
-    let mut input_bytes = Vec::<u8>::new();
+    let mut input_bytes = Vec::new();
     env::stdin().read_to_end(&mut input_bytes).unwrap();
 
     // Decode the ABI-encoded input
