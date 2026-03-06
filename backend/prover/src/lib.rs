@@ -263,6 +263,7 @@ pub async fn generate_proof(
         .with_uploader_config(&storage_config)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to configure storage uploader: {e}"))?
+        .with_skip_preflight(true)
         .build()
         .await?;
 
