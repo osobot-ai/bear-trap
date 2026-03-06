@@ -206,6 +206,7 @@ pub async fn generate_proof(
     use alloy_primitives::{Address, FixedBytes, U256};
     use alloy_sol_types::{sol, SolValue};
     use boundless_market::client::Client;
+    use boundless_market::storage::StorageUploaderConfig;
 
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -250,9 +251,17 @@ pub async fn generate_proof(
 
     let rpc_url: url::Url = config.rpc_url.parse()?;
 
+    let mut storage_config = StorageUploaderConfig::default();
+    if let Some(ref jwt) = config.pinata_jwt {
+        storage_config.pinata_jwt = Some(jwt.clone());
+    }
+
     let client = Client::builder()
         .with_rpc_url(rpc_url)
         .with_private_key_str(&config.private_key)?
+        .with_uploader_config(&storage_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to configure storage uploader: {e}"))?
         .build()
         .await?;
 
