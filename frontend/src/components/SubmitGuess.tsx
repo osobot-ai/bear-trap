@@ -136,14 +136,63 @@ export function SubmitGuess() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Check if this was a wrong guess (ticket already consumed)
-        if (data.error?.includes("Wrong guess")) {
-          setErrorMessage(data.error);
+        const error = data.error || "Proof generation failed";
+
+        // Wrong guess — ticket was consumed but answer was incorrect
+        if (error.includes("Wrong guess")) {
+          setErrorMessage(error);
           setStep("wrong");
           refetchTicketBalance();
           return;
         }
-        throw new Error(data.error || "Proof generation failed");
+
+        // On-chain ticket burn failures (no ticket consumed)
+        if (error.includes("no tickets") || error.includes("No tickets") || error.includes("Buy tickets")) {
+          setErrorMessage("You don't have any tickets. Buy tickets first!");
+          setStep("error");
+          return;
+        }
+        if (error.includes("AlreadySolved") || error.includes("already been solved")) {
+          setErrorMessage("This puzzle has already been solved by another player.");
+          setStep("error");
+          return;
+        }
+        if (error.includes("InvalidPuzzleId") || error.includes("Invalid puzzle")) {
+          setErrorMessage("This puzzle doesn't exist. Please refresh the page.");
+          setStep("error");
+          return;
+        }
+
+        // Auth / signature errors (no ticket consumed)
+        if (error.includes("Signature") || error.includes("signature")) {
+          setErrorMessage("Wallet signature verification failed. Please try again.");
+          setStep("error");
+          return;
+        }
+
+        // Rate limiting
+        if (error.includes("Rate limit") || response.status === 429) {
+          setErrorMessage("Too many attempts. Please wait a minute and try again.");
+          setStep("error");
+          return;
+        }
+
+        // Server misconfiguration (not the user's fault)
+        if (error.includes("Server misconfiguration") || response.status === 500) {
+          setErrorMessage("Something went wrong on our end. Please try again later.");
+          setStep("error");
+          return;
+        }
+
+        // Proof generation failed (ticket WAS consumed)
+        if (data.ticket_burned) {
+          setErrorMessage(`${error} (Your ticket was consumed.)`);
+          setStep("error");
+          refetchTicketBalance();
+          return;
+        }
+
+        throw new Error(error);
       }
 
       const result = data as ProveResult;
