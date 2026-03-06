@@ -8,7 +8,7 @@ import {
   useSendTransaction,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { encodeAbiParameters, type Hex } from "viem";
+import { encodeAbiParameters, parseEther, type Hex } from "viem";
 import {
   createExecution,
   ExecutionMode,
@@ -50,6 +50,7 @@ interface ProveResult {
   solverAddress: string;
   solutionHash: string;
   delegation: DelegationData | null;
+  prizeEth: string | null;
 }
 
 export function SubmitGuess() {
@@ -234,10 +235,12 @@ export function SubmitGuess() {
       signature: delegation.signature as Hex,
     };
 
-    // TODO: execution value should match the prize amount from puzzle data
+    const prizeWei = proofData.prizeEth
+      ? parseEther(proofData.prizeEth)
+      : BigInt(0);
     const execution = createExecution({
       target: address,
-      value: BigInt(0),
+      value: prizeWei,
       callData: "0x" as Hex,
     });
 
