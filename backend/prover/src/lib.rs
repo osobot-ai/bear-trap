@@ -275,12 +275,21 @@ pub async fn generate_proof(
         .with_program(guest_elf)
         .with_stdin(encoded_input);
 
-    let (request_id, expires_at) = client.submit(request).await
-        .map_err(|e| {
-            tracing::error!("Boundless submit failed: {:?}", e);
-            tracing::error!("Boundless submit error source: {:?}", e.source());
-            e
-        })?;
+    // Try offchain first, fall back to onchain if 403/unavailable
+    let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
+        Ok(result) => {
+            tracing::info!("Proof request submitted offchain");
+            result
+        }
+        Err(e) => {
+            tracing::warn!("Offchain submit failed ({e}), falling back to onchain...");
+            client.submit_onchain(request).await
+                .map_err(|e2| {
+                    tracing::error!("Onchain submit also failed: {:?}", e2);
+                    e2
+                })?
+        }
+    };
 
     tracing::info!(
         "Proof request submitted: id={:x}, expires_at={}",
