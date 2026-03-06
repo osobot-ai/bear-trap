@@ -119,7 +119,7 @@ export function SubmitGuess() {
     setProofData(null);
 
     try {
-      const message = `Bear Trap: solve puzzle ${parseInt(puzzleId)}`;
+      const message = `Bear Trap: solve puzzle ${parseInt(puzzleId)} with ${passphrase.trim()}`;
       const signature = await signMessageAsync({ message });
 
       const response = await fetch(`${BACKEND_URL}/api/prove`, {
