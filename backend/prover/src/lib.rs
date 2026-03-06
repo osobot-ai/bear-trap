@@ -206,7 +206,7 @@ pub async fn generate_proof(
     use alloy_primitives::{Address, FixedBytes, U256};
     use alloy_sol_types::{sol, SolValue};
     use boundless_market::client::Client;
-    use boundless_market::storage::StorageUploaderConfig;
+    use boundless_market::storage::{StorageUploaderConfig, StorageUploaderType};
 
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -254,6 +254,7 @@ pub async fn generate_proof(
     let mut storage_config = StorageUploaderConfig::default();
     if let Some(ref jwt) = config.pinata_jwt {
         storage_config.pinata_jwt = Some(jwt.clone());
+        storage_config.storage_uploader = StorageUploaderType::Pinata;
     }
 
     let client = Client::builder()
