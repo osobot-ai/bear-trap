@@ -10,14 +10,10 @@
 // Public outputs (journal):   ABI-encoded PuzzleOutput
 
 #![no_main]
-#![no_std]
 
-extern crate alloc;
-
-use alloc::vec::Vec;
+use std::io::Read;
 use alloy_primitives::{Address, Keccak256, B256};
 use alloy_sol_types::{sol, SolValue};
-use risc0_zkvm::guest::env::Read as _;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use risc0_zkvm::guest::env;
 use sha2::{Digest, Sha256};
