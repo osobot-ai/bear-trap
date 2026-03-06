@@ -6,10 +6,10 @@ import {BearTrap, IERC20} from "../src/BearTrap.sol";
 import {ZKPEnforcer} from "../src/ZKPEnforcer.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
-/// @title Deploy — Deploy Bear Trap contracts
+/// @title Deploy — Deploy Bear Trap contracts via CREATE2 for deterministic addresses
 /// @dev Run with:
 ///   source .env
-///   forge script contracts/scripts/Deploy.s.sol --rpc-url ${RPC_URL} --broadcast -vv
+///   forge script contracts/scripts/Deploy.s.sol --rpc-url ${RPC_URL} --broadcast -vv --verify
 contract Deploy is Script {
     function run() external {
         // Read environment variables
@@ -17,23 +17,25 @@ contract Deploy is Script {
         address osoTokenAddress = vm.envAddress("OSO_TOKEN");
         uint256 ticketPrice = vm.envUint("TICKET_PRICE");
         address ownerAddress = vm.envAddress("OWNER_ADDRESS");
+        bytes32 salt = vm.envBytes32("DEPLOY_SALT");
 
-        console2.log("Deploying Bear Trap contracts...");
+        console2.log("Deploying Bear Trap contracts (CREATE2)...");
         console2.log("Verifier:", verifierAddress);
         console2.log("OSO Token:", osoTokenAddress);
         console2.log("Ticket Price:", ticketPrice);
         console2.log("Owner:", ownerAddress);
+        console2.log("Salt:", vm.toString(salt));
 
         vm.startBroadcast();
 
-        // Deploy ZKPEnforcer
-        ZKPEnforcer zkpEnforcer = new ZKPEnforcer(
+        // Deploy ZKPEnforcer via CREATE2
+        ZKPEnforcer zkpEnforcer = new ZKPEnforcer{salt: salt}(
             IRiscZeroVerifier(verifierAddress)
         );
         console2.log("ZKPEnforcer deployed at:", address(zkpEnforcer));
 
-        // Deploy BearTrap with owner (who is also the operator)
-        BearTrap bearTrap = new BearTrap(
+        // Deploy BearTrap via CREATE2
+        BearTrap bearTrap = new BearTrap{salt: salt}(
             IERC20(osoTokenAddress),
             ticketPrice,
             ownerAddress
@@ -48,7 +50,7 @@ contract Deploy is Script {
         console2.log("BearTrap:", address(bearTrap));
         console2.log("");
         console2.log("Next steps:");
-        console2.log("1. Set BEAR_TRAP_ADDRESS in .env");
+        console2.log("1. Set BEAR_TRAP_ADDRESS and ZKP_ENFORCER_ADDRESS in .env");
         console2.log("2. Create a delegation from Treasury Safe with ZKPEnforcer caveat");
         console2.log("3. Create puzzles via bearTrap.createPuzzle()");
     }
