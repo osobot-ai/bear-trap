@@ -19,6 +19,7 @@ risc0-zkvm = { version = "3.0.3", default-features = false }
 risc0-build-ethereum = { version = "3.0.1" }
 risc0-ethereum-contracts = { version = "3.0.1" }
 
+alloy = { version = "1.0", default-features = false }
 alloy-primitives = { version = "1.0", default-features = false, features = ["rlp", "serde", "std"] }
 alloy-sol-types = { version = "1.0" }
 sha2 = { version = "0.10" }

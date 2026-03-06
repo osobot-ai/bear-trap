@@ -8,10 +8,18 @@ use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use shared::{Db, validate_delegation_json};
 use alloy::primitives::{Address, B256, U256, keccak256};
+use alloy::providers::ProviderBuilder;
 use alloy::sol;
 use alloy::sol_types::SolStruct;
 use alloy::signers::SignerSync;
 use alloy::signers::local::PrivateKeySigner;
+
+sol! {
+    #[sol(rpc)]
+    contract BearTrapContract {
+        function createPuzzle(string calldata clueURI) external;
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "bear-trap-admin")]
@@ -213,7 +221,8 @@ fn parse_eth_to_wei(eth: &str) -> U256 {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
     let environment = &cli.env;
 
@@ -230,6 +239,34 @@ fn main() {
             db.init().expect("Failed to initialize database");
 
             let solution_hash = sha256_hex(&answer);
+
+            // 1. Call createPuzzle on-chain
+            let rpc_url = env::var("RPC_URL").expect("RPC_URL env var required");
+            let private_key = env::var("OPERATOR_PRIVATE_KEY")
+                .expect("OPERATOR_PRIVATE_KEY env var required (owner of BearTrap contract)");
+            let bear_trap_addr: Address = env::var("BEAR_TRAP_ADDRESS")
+                .expect("BEAR_TRAP_ADDRESS env var required")
+                .parse()
+                .expect("Invalid BEAR_TRAP_ADDRESS");
+
+            let signer: PrivateKeySigner = private_key.parse().expect("Invalid OPERATOR_PRIVATE_KEY");
+            let provider = ProviderBuilder::new()
+                .wallet(alloy::network::EthereumWallet::from(signer))
+                .connect_http(rpc_url.parse().expect("Invalid RPC_URL"));
+
+            let contract = BearTrapContract::new(bear_trap_addr, &provider);
+            let tx = contract.createPuzzle(clue_uri.clone())
+                .send()
+                .await
+                .expect("Failed to send createPuzzle transaction");
+
+            let receipt = tx.get_receipt()
+                .await
+                .expect("Failed to get transaction receipt");
+
+            println!("On-chain createPuzzle tx: {:?}", receipt.transaction_hash);
+
+            // 2. Create in database
             let next_id = db
                 .next_puzzle_id(environment)
                 .expect("Failed to query next puzzle ID");
