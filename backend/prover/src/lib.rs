@@ -269,6 +269,7 @@ pub async fn generate_proof(
         .await?;
 
     tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
+    tracing::info!("Storage config: uploader={:?}, pinata_jwt_set={}", storage_config.storage_uploader, config.pinata_jwt.is_some());
 
     let request = client
         .new_request()
