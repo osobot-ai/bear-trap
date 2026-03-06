@@ -74,6 +74,13 @@ enum Commands {
     /// List all puzzles with their active delegation prize.
     ListPuzzles,
 
+    /// Delete a puzzle by ID (and its associated delegations).
+    DeletePuzzle {
+        /// Puzzle ID to delete.
+        #[arg(long)]
+        id: i64,
+    },
+
     /// Create and sign a delegation for a puzzle (via DelegationManager off-chain signing).
     /// Generates an open delegation (ANY_DELEGATE) with three caveats:
     /// - ZKPEnforcer: ZK proof verification + operator attestation
@@ -292,6 +299,20 @@ fn main() {
                 );
             }
             println!();
+        }
+
+        Commands::DeletePuzzle { id } => {
+            let db = get_db();
+            db.init().expect("Failed to initialize database");
+
+            let deleted = db.delete_puzzle(environment, id)
+                .expect("Failed to delete puzzle");
+
+            if deleted {
+                println!("Deleted puzzle #{id} ({environment}) and its associated delegations.");
+            } else {
+                println!("No puzzle found with id #{id} ({environment}).");
+            }
         }
 
         Commands::CreateDelegation {

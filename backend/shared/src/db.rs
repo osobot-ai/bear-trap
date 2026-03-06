@@ -232,6 +232,19 @@ impl Db {
     }
 
     /// Update only the prize amount for the active delegation of a puzzle.
+    pub fn delete_puzzle(&self, env: &str, id: i64) -> Result<bool> {
+        // Delete associated delegations first
+        self.conn.execute(
+            "DELETE FROM delegations WHERE puzzle_id = ?1 AND environment = ?2",
+            params![id, env],
+        )?;
+        let rows = self.conn.execute(
+            "DELETE FROM puzzles WHERE id = ?1 AND environment = ?2",
+            params![id, env],
+        )?;
+        Ok(rows > 0)
+    }
+
     pub fn update_prize(&self, env: &str, puzzle_id: i64, prize_eth: &str) -> Result<()> {
         let updated = self.conn.execute(
             "UPDATE delegations SET prize_eth = ?1, updated_at = CURRENT_TIMESTAMP
