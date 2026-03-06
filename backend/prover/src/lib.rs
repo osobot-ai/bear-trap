@@ -204,7 +204,6 @@ pub async fn generate_proof(
     operator_signer: &PrivateKeySigner,
 ) -> Result<ProofResult> {
     use alloy_primitives::{Address, FixedBytes, U256};
-    use std::error::Error as StdError;
     use alloy_sol_types::{sol, SolValue};
     use boundless_market::client::Client;
     use boundless_market::storage::{StorageUploaderConfig, StorageUploaderType};
@@ -287,7 +286,7 @@ pub async fn generate_proof(
         .with_stdin(encoded_input)
         .with_image_id(risc0_zkvm::sha::Digest::from(image_id_bytes))
         .with_cycles(1 << 24)
-        .with_journal(vec![]);
+        .with_journal(risc0_zkvm::Journal::new(vec![]));
 
     // Try offchain first, fall back to onchain if 403/unavailable
     let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
