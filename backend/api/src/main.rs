@@ -107,6 +107,7 @@ struct ProveSuccessResponse {
     solver_address: String,
     solution_hash: String,
     delegation: Option<serde_json::Value>,
+    prize_eth: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -522,9 +523,13 @@ async fn prove(
     match proof_result {
         Ok(result) => {
             // Parse delegation JSON for inclusion in response
-            let delegation_value = delegation.and_then(|d| {
-                serde_json::from_str::<serde_json::Value>(&d.delegation_json).ok()
-            });
+            let (delegation_value, prize_eth) = match delegation {
+                Some(d) => (
+                    serde_json::from_str::<serde_json::Value>(&d.delegation_json).ok(),
+                    Some(d.prize_eth),
+                ),
+                None => (None, None),
+            };
 
             (
                 StatusCode::OK,
@@ -534,6 +539,7 @@ async fn prove(
                     solver_address: result.solver_address,
                     solution_hash: result.solution_hash,
                     delegation: delegation_value,
+                    prize_eth,
                 }),
             )
                 .into_response()
