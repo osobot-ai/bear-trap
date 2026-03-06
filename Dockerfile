@@ -7,7 +7,7 @@ COPY Cargo.toml ./Cargo.toml
 COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN cd backend && cargo build --release --bin bear-trap-api --bin bear-trap-admin
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/backend/target/release/bear-trap-api /usr/local/bin/
 COPY --from=builder /app/backend/target/release/bear-trap-admin /usr/local/bin/
