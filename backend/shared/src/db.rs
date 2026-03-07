@@ -1,4 +1,3 @@
-use rand::Rng;
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +32,7 @@ pub struct Delegation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofRequest {
-    pub id: String,
+    pub id: i64,
     pub environment: String,
     pub puzzle_id: i64,
     pub solver_address: String,
@@ -44,13 +43,6 @@ pub struct ProofRequest {
     pub created_at: String,
     pub updated_at: String,
     pub expires_at: Option<i64>,
-}
-
-/// Generate a random 32-character hex ID (16 random bytes).
-fn generate_proof_request_id() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 16] = rng.gen();
-    hex::encode(bytes)
 }
 
 const _CURRENT_SCHEMA_VERSION: i32 = 2;
@@ -129,7 +121,7 @@ impl Db {
             self.conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS proof_requests (
-                    id TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     environment TEXT NOT NULL,
                     puzzle_id INTEGER NOT NULL,
                     solver_address TEXT NOT NULL,
@@ -336,16 +328,15 @@ impl Db {
         env: &str,
         puzzle_id: i64,
         solver_address: &str,
-    ) -> Result<String> {
-        let id = generate_proof_request_id();
+    ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO proof_requests (id, environment, puzzle_id, solver_address) VALUES (?1, ?2, ?3, ?4)",
-            params![id, env, puzzle_id, solver_address],
+            "INSERT INTO proof_requests (environment, puzzle_id, solver_address) VALUES (?1, ?2, ?3)",
+            params![env, puzzle_id, solver_address],
         )?;
-        Ok(id)
+        Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn get_proof_request(&self, id: &str) -> Result<Option<ProofRequest>> {
+    pub fn get_proof_request(&self, id: i64) -> Result<Option<ProofRequest>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
              FROM proof_requests WHERE id = ?1",
@@ -374,7 +365,7 @@ impl Db {
         }
     }
 
-    pub fn update_proof_request_status(&self, id: &str, status: &str) -> Result<()> {
+    pub fn update_proof_request_status(&self, id: i64, status: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE proof_requests SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![status, id],
@@ -382,7 +373,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn update_proof_request_result(&self, id: &str, result_json: &str) -> Result<()> {
+    pub fn update_proof_request_result(&self, id: i64, result_json: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE proof_requests SET status = 'fulfilled', result_json = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![result_json, id],
@@ -390,7 +381,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn update_proof_request_error(&self, id: &str, error_message: &str) -> Result<()> {
+    pub fn update_proof_request_error(&self, id: i64, error_message: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE proof_requests SET status = 'failed', error_message = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![error_message, id],
@@ -398,9 +389,45 @@ impl Db {
         Ok(())
     }
 
+    /// Check if there's already an active (submitted/locked) proof request for this solver+puzzle.
+    pub fn find_active_proof_request(
+        &self,
+        env: &str,
+        puzzle_id: i64,
+        solver_address: &str,
+    ) -> Result<Option<ProofRequest>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
+             FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND solver_address = ?3 AND status IN ('submitted', 'locked')
+             ORDER BY created_at DESC LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query_map(params![env, puzzle_id, solver_address], |row| {
+            Ok(ProofRequest {
+                id: row.get(0)?,
+                environment: row.get(1)?,
+                puzzle_id: row.get(2)?,
+                solver_address: row.get(3)?,
+                boundless_request_id: row.get(4)?,
+                status: row.get(5)?,
+                result_json: row.get(6)?,
+                error_message: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                expires_at: row.get(10)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(Ok(pr)) => Ok(Some(pr)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
     pub fn update_proof_request_boundless_id(
         &self,
-        id: &str,
+        id: i64,
         boundless_request_id: &str,
         expires_at: i64,
     ) -> Result<()> {

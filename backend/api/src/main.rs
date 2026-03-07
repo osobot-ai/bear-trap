@@ -102,7 +102,7 @@ struct ErrorResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProveSubmittedResponse {
-    proof_request_id: String,
+    proof_request_id: i64,
     status: String,
     message: String,
 }
@@ -467,6 +467,36 @@ async fn prove(
     let contract = BearTrap::new(bear_trap_addr, provider);
     let puzzle_id_u256 = alloy::primitives::U256::from(req.puzzle_id as u64);
 
+    // Check for duplicate active proof request (prevent double-burn)
+    {
+        let env_check = state.environment.clone();
+        let solver_check = req.solver_address.clone();
+        let pid = puzzle_id;
+        let state_check = Arc::clone(&state);
+        let existing = tokio::task::spawn_blocking(move || {
+            let db = state_check.db.lock().expect("db mutex poisoned");
+            db.find_active_proof_request(&env_check, pid, &solver_check)
+        })
+        .await
+        .expect("spawn_blocking panicked");
+
+        if let Ok(Some(active)) = existing {
+            tracing::warn!(
+                "Active proof request {} already exists for solver {} puzzle {}",
+                active.id, req.solver_address, puzzle_id
+            );
+            return (
+                StatusCode::CONFLICT,
+                Json(ProveSubmittedResponse {
+                    proof_request_id: active.id,
+                    status: active.status,
+                    message: "A proof request is already in progress. Poll for status.".into(),
+                }),
+            )
+                .into_response();
+        }
+    }
+
     tracing::info!(
         "Calling useTicket for {} on puzzle {}",
         req.solver_address,
@@ -583,7 +613,7 @@ async fn prove(
                 let data_str = fulfilled_data.to_string();
                 let _ = tokio::task::spawn_blocking(move || {
                     let db = state2.db.lock().expect("db mutex poisoned");
-                    if let Err(e) = db.update_proof_request_result(&pr_id, &data_str) {
+                    if let Err(e) = db.update_proof_request_result(pr_id, &data_str) {
                         tracing::error!("Failed to update proof request result: {e}");
                     }
                 })
@@ -598,7 +628,7 @@ async fn prove(
                 let error_msg = msg.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     let db = state2.db.lock().expect("db mutex poisoned");
-                    if let Err(e) = db.update_proof_request_error(&pr_id, &error_msg) {
+                    if let Err(e) = db.update_proof_request_error(pr_id, &error_msg) {
                         tracing::error!("Failed to update proof request error: {e}");
                     }
                 })
@@ -646,7 +676,7 @@ async fn prove(
                 let state2 = Arc::clone(&state);
                 let _ = tokio::task::spawn_blocking(move || {
                     let db = state2.db.lock().expect("db mutex poisoned");
-                    if let Err(e) = db.update_proof_request_boundless_id(&pr_id, &boundless_id, exp) {
+                    if let Err(e) = db.update_proof_request_boundless_id(pr_id, &boundless_id, exp) {
                         tracing::error!("Failed to update boundless request ID: {e}");
                     }
                 })
@@ -659,6 +689,25 @@ async fn prove(
                 let delegation_bg = delegation;
                 let puzzle_id_bg = req.puzzle_id;
                 tokio::spawn(async move {
+                    // Update status to "locked" after a short delay
+                    // (Boundless typically locks within 30-60s)
+                    {
+                        let state_lock = Arc::clone(&state_bg);
+                        let pr_id_lock = pr_id;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                            let _ = tokio::task::spawn_blocking(move || {
+                                let db = state_lock.db.lock().expect("db mutex poisoned");
+                                // Only update if still "submitted" (not already fulfilled/failed)
+                                if let Ok(Some(pr)) = db.get_proof_request(pr_id_lock) {
+                                    if pr.status == "submitted" {
+                                        let _ = db.update_proof_request_status(pr_id_lock, "locked");
+                                    }
+                                }
+                            }).await;
+                        });
+                    }
+
                     let result = submission.fulfillment_future.await;
                     match result {
                         Ok(proof_result) => {
@@ -683,7 +732,7 @@ async fn prove(
                             let data_str = fulfilled_data.to_string();
                             let _ = tokio::task::spawn_blocking(move || {
                                 let db = state_bg.db.lock().expect("db mutex poisoned");
-                                if let Err(e) = db.update_proof_request_result(&pr_id, &data_str) {
+                                if let Err(e) = db.update_proof_request_result(pr_id, &data_str) {
                                     tracing::error!("Failed to update proof request result: {e}");
                                 }
                             })
@@ -696,7 +745,7 @@ async fn prove(
                             tracing::error!("Background proof failed for puzzle {puzzle_id_bg}: {error_msg}");
                             let _ = tokio::task::spawn_blocking(move || {
                                 let db = state_bg.db.lock().expect("db mutex poisoned");
-                                if let Err(e) = db.update_proof_request_error(&pr_id, &error_msg) {
+                                if let Err(e) = db.update_proof_request_error(pr_id, &error_msg) {
                                     tracing::error!("Failed to update proof request error: {e}");
                                 }
                             })
@@ -714,7 +763,7 @@ async fn prove(
                 let error_msg = msg.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     let db = state2.db.lock().expect("db mutex poisoned");
-                    if let Err(e) = db.update_proof_request_error(&pr_id, &error_msg) {
+                    if let Err(e) = db.update_proof_request_error(pr_id, &error_msg) {
                         tracing::error!("Failed to update proof request error: {e}");
                     }
                 })
@@ -757,14 +806,13 @@ async fn prove(
 
 async fn proof_status(
     State(state): State<Arc<AppState>>,
-    Path(proof_request_id): Path<String>,
+    Path(proof_request_id): Path<i64>,
 ) -> impl IntoResponse {
-    let pr_id = proof_request_id.clone();
     let db_result = {
         let state = Arc::clone(&state);
         tokio::task::spawn_blocking(move || {
             let db = state.db.lock().expect("db mutex poisoned");
-            db.get_proof_request(&pr_id)
+            db.get_proof_request(proof_request_id)
         })
         .await
         .expect("spawn_blocking panicked")

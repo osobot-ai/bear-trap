@@ -54,7 +54,7 @@ interface ProveResult {
 }
 
 interface ProveSubmittedResult {
-  proofRequestId: string;
+  proofRequestId: number;
   status: string;
   message: string;
 }
@@ -141,7 +141,7 @@ export function SubmitGuess() {
   const tickets = ticketBalance ? Number(ticketBalance) : 0;
   const hasTickets = tickets > 0;
 
-  const startPolling = useCallback((proofRequestId: string) => {
+  const startPolling = useCallback((proofRequestId: number) => {
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
     }
