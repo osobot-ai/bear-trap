@@ -53,6 +53,25 @@ interface ProveResult {
   prizeEth: string | null;
 }
 
+interface ProveSubmittedResult {
+  proofRequestId: string;
+  status: string;
+  message: string;
+}
+
+interface ProofStatusResult {
+  status: string;
+  message?: string;
+  error?: string;
+  seal?: string;
+  journal?: string;
+  solverAddress?: string;
+  solutionHash?: string;
+  delegation?: DelegationData | null;
+  prizeEth?: string | null;
+  puzzleId?: number;
+}
+
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
@@ -61,6 +80,8 @@ export function SubmitGuess() {
   const [step, setStep] = useState<SubmitStep>("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [proofData, setProofData] = useState<ProveResult | null>(null);
+  const [provingMessage, setProvingMessage] = useState<string>("");
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Read puzzle count for the selector
   const { data: puzzleCount } = useReadContract({
@@ -93,6 +114,15 @@ export function SubmitGuess() {
   const markSolvedCalled = useRef(false);
 
   useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isConfirmed || markSolvedCalled.current || !redeemHash) return;
     markSolvedCalled.current = true;
 
@@ -111,13 +141,76 @@ export function SubmitGuess() {
   const tickets = ticketBalance ? Number(ticketBalance) : 0;
   const hasTickets = tickets > 0;
 
-  // Step 1: Generate proof via API (which also burns the ticket)
+  const startPolling = useCallback((proofRequestId: string) => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+    }
+
+    const poll = async () => {
+      try {
+        const statusResponse = await fetch(
+          `${BACKEND_URL}/api/prove/status/${proofRequestId}`
+        );
+        const statusData = (await statusResponse.json()) as ProofStatusResult;
+
+        if (statusData.status === "submitted") {
+          setProvingMessage("Proof request is queued...");
+        } else if (statusData.status === "locked") {
+          setProvingMessage("A prover is generating your proof...");
+        } else if (statusData.status === "fulfilled") {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+          setProofData({
+            seal: statusData.seal!,
+            journal: statusData.journal!,
+            solverAddress: statusData.solverAddress!,
+            solutionHash: statusData.solutionHash!,
+            delegation: statusData.delegation ?? null,
+            prizeEth: statusData.prizeEth ?? null,
+          });
+          setStep("proof-ready");
+          refetchTicketBalance();
+        } else if (statusData.status === "failed") {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+          const errMsg = statusData.error || "Proof generation failed";
+          if (errMsg.includes("Wrong guess")) {
+            setErrorMessage(errMsg);
+            setStep("wrong");
+          } else {
+            setErrorMessage(`${errMsg} (Your ticket was consumed.)`);
+            setStep("error");
+          }
+          refetchTicketBalance();
+        } else if (statusData.status === "expired") {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+          setErrorMessage("Proof request expired. Your ticket was consumed.");
+          setStep("error");
+          refetchTicketBalance();
+        }
+      } catch {
+        // Network error during polling — keep trying
+      }
+    };
+
+    poll();
+    pollingRef.current = setInterval(poll, 10000);
+  }, [refetchTicketBalance]);
+
   const handleSolvePuzzle = useCallback(async () => {
     if (!passphrase.trim() || !address) return;
 
     setStep("proving");
     setErrorMessage("");
     setProofData(null);
+    setProvingMessage("Burning ticket & submitting proof request...");
 
     try {
       const message = `Bear Trap: solve puzzle ${parseInt(puzzleId)} with ${passphrase.trim()}`;
@@ -139,7 +232,6 @@ export function SubmitGuess() {
       if (!response.ok) {
         const error = data.error || "Proof generation failed";
 
-        // Wrong guess — ticket was consumed but answer was incorrect
         if (error.includes("Wrong guess")) {
           setErrorMessage(error);
           setStep("wrong");
@@ -147,7 +239,6 @@ export function SubmitGuess() {
           return;
         }
 
-        // On-chain ticket burn failures (no ticket consumed)
         if (error.includes("no tickets") || error.includes("No tickets") || error.includes("Buy tickets")) {
           setErrorMessage("You don't have any tickets. Buy tickets first!");
           setStep("error");
@@ -164,29 +255,25 @@ export function SubmitGuess() {
           return;
         }
 
-        // Auth / signature errors (no ticket consumed)
         if (error.includes("Signature") || error.includes("signature")) {
           setErrorMessage("Wallet signature verification failed. Please try again.");
           setStep("error");
           return;
         }
 
-        // Rate limiting
         if (error.includes("Rate limit") || response.status === 429) {
           setErrorMessage("Too many attempts. Please wait a minute and try again.");
           setStep("error");
           return;
         }
 
-        // Server misconfiguration (not the user's fault)
         if (error.includes("Server misconfiguration") || response.status === 500) {
           setErrorMessage("Something went wrong on our end. Please try again later.");
           setStep("error");
           return;
         }
 
-        // Proof generation failed (ticket WAS consumed)
-        if (data.ticket_burned) {
+        if (data.ticketBurned) {
           setErrorMessage(`${error} (Your ticket was consumed.)`);
           setStep("error");
           refetchTicketBalance();
@@ -196,17 +283,16 @@ export function SubmitGuess() {
         throw new Error(error);
       }
 
-      const result = data as ProveResult;
-      setProofData(result);
-      setStep("proof-ready");
+      const submitted = data as ProveSubmittedResult;
       refetchTicketBalance();
+      startPolling(submitted.proofRequestId);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to generate proof"
       );
       setStep("error");
     }
-  }, [passphrase, address, puzzleId, signMessageAsync, refetchTicketBalance]);
+  }, [passphrase, address, puzzleId, signMessageAsync, refetchTicketBalance, startPolling]);
 
   const handleRedeemPrize = useCallback(() => {
     if (!proofData || !address || !proofData.delegation) return;
@@ -261,10 +347,15 @@ export function SubmitGuess() {
 
   // Reset flow
   const handleReset = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
     setStep("idle");
     setPassphrase("");
     setErrorMessage("");
     setProofData(null);
+    setProvingMessage("");
     markSolvedCalled.current = false;
   }, []);
 
@@ -407,11 +498,11 @@ export function SubmitGuess() {
             </div>
             <div>
               <p className="font-mono text-sm text-trap-text">
-                Burning ticket &amp; generating proof...
+                {provingMessage || "Burning ticket & generating proof..."}
               </p>
               <p className="text-xs text-trap-muted mt-1">
                 Your ticket has been consumed. Generating zero-knowledge proof...
-                This may take 1-3 minutes.
+                This may take several minutes.
               </p>
             </div>
           </div>

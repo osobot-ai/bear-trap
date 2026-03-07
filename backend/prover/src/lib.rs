@@ -195,14 +195,22 @@ fn load_guest_elf() -> Result<Vec<u8>> {
     )
 }
 
-pub async fn generate_proof(
+pub type FulfillmentFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<ProofResult>> + Send>>;
+
+pub struct SubmitProofResult {
+    pub boundless_request_id: String,
+    pub expires_at: u64,
+    pub fulfillment_future: FulfillmentFuture,
+}
+
+pub async fn submit_proof(
     config: &ProverConfig,
     guess: &str,
     solver_address: &str,
     expected_hash: &str,
     puzzle_id: u64,
     operator_signer: &PrivateKeySigner,
-) -> Result<ProofResult> {
+) -> Result<SubmitProofResult> {
     use alloy_primitives::{Address, FixedBytes, U256};
     use alloy_sol_types::{sol, SolValue};
     use boundless_market::client::Client;
@@ -270,16 +278,12 @@ pub async fn generate_proof(
     tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
     tracing::info!("Storage config: uploader={:?}, pinata_jwt_set={}", storage_config.storage_uploader, config.pinata_jwt.is_some());
 
-    // Parse image ID from ImageID.sol constant
     let image_id_hex = "8da19e69de35e4e648d8ca7e6779069b50c09e9241ddd8cac6a6a199d0c7e8ed";
     let image_id_bytes: [u8; 32] = hex::decode(image_id_hex)
         .expect("Invalid image ID hex")
         .try_into()
         .expect("Image ID must be 32 bytes");
 
-    // Set cycles + journal + image_id to skip preflight execution.
-    // The Boundless prover will re-execute and compute the real values.
-    // We use a generous cycle estimate; the market auction handles pricing.
     let request = client
         .new_request()
         .with_program(guest_elf)
@@ -288,7 +292,6 @@ pub async fn generate_proof(
         .with_cycles(1 << 24)
         .with_journal(risc0_zkvm::Journal::new(vec![]));
 
-    // Try offchain first, fall back to onchain if 403/unavailable
     let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
         Ok(result) => {
             tracing::info!("Proof request submitted offchain");
@@ -310,22 +313,33 @@ pub async fn generate_proof(
         expires_at
     );
 
-    let fulfillment = client
-        .wait_for_request_fulfillment(request_id, Duration::from_secs(10), expires_at)
-        .await?;
+    let solver_address_owned = solver_address.to_string();
+    let expected_hash_owned = expected_hash.to_string();
 
-    tracing::info!("Proof request {:x} fulfilled!", request_id);
+    let fulfillment_future: FulfillmentFuture = Box::pin(async move {
+        let fulfillment = client
+            .wait_for_request_fulfillment(request_id, Duration::from_secs(10), expires_at)
+            .await?;
 
-    let fulfillment_data = fulfillment.data().map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
-    let seal = fulfillment.seal.to_vec();
-    let journal = fulfillment_data.journal().ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?.to_vec();
+        tracing::info!("Proof request {:x} fulfilled!", request_id);
 
-    Ok(ProofResult {
-        seal,
-        journal,
-        solver_address: solver_address.to_string(),
-        solution_hash: expected_hash.to_string(),
-        puzzle_id,
+        let fulfillment_data = fulfillment.data().map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
+        let seal = fulfillment.seal.to_vec();
+        let journal = fulfillment_data.journal().ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?.to_vec();
+
+        Ok(ProofResult {
+            seal,
+            journal,
+            solver_address: solver_address_owned,
+            solution_hash: expected_hash_owned,
+            puzzle_id,
+        })
+    });
+
+    Ok(SubmitProofResult {
+        boundless_request_id: format!("{:x}", request_id),
+        expires_at,
+        fulfillment_future,
     })
 }
 
