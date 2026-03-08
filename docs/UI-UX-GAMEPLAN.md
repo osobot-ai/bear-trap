@@ -336,17 +336,34 @@ Create a `SoundEngine` class using the Web Audio API:
 
 Implementation: All sounds generated procedurally with Web Audio API oscillators, filters, and envelopes. No audio files needed. ~200 lines of code.
 
-### 5b. ElevenLabs Voiceover (Optional, Enhanced Experience)
+### 5b. ElevenLabs — Sound Effects, Voiceover & Music (MANDATORY)
 
-Pre-generate a few Trapper voiceover clips:
+ElevenLabs is **required** for all audio in Bear Trap. No placeholder synth sounds — everything ships with ElevenLabs-generated audio.
+
+**Voiceover Lines (The Trapper — deep, gravelly voice):**
 - *"The trap is set. Begin."* (countdown end)
 - *"Wrong. The trap holds."* (wrong guess)
 - *"The proof is valid. Claim what's yours."* (proof ready)
 - *"The trap is broken. But I'll return."* (prize claimed)
+- *"Something is coming. The trap is being set..."* (countdown teaser)
+- *"The connection is unstable. The trap waits..."* (error state)
 
-These would be short `.mp3` files served from `/public/audio/`. Play on user interaction (respecting autoplay policies).
+**Sound Effects (ElevenLabs Sound Generation):**
+- Metallic countdown tick (final 10 seconds)
+- Deep boom + reverb (puzzle reveal at T-0)
+- Fire crackle (ticket burn)
+- Metal clang + bear trap snap (wrong guess)
+- Ascending chime (proof verified)
+- Chain breaking + triumphant fanfare (prize claimed)
+- Low ominous ambient drone (background, optional toggle)
 
-**Need**: ElevenLabs API key from Ryan to generate these with a deep, mysterious voice.
+**Music:**
+- Short ambient loop for the puzzle page (dark, tense, minimal)
+- Victory stinger (5-10 seconds, plays on successful claim)
+
+All audio served as `.mp3` from `/public/audio/`. Play on user interaction (respecting autoplay policies).
+
+**Need**: ElevenLabs API key from Ryan.
 
 ### 5c. Sound Toggle
 
@@ -460,8 +477,8 @@ Two locks connected by a chain, representing the two sides of the intent:
 | 8 | No-puzzle state (State 3) | 1-2 hours | P1 |
 | 9 | Wrong guess animation | 2-3 hours | P1 |
 | 10 | Correct guess + claim animation | 3-4 hours | P1 |
-| 11 | Web Audio API sound engine | 2-3 hours | P2 |
-| 12 | ElevenLabs voiceover generation | 1-2 hours | P2 |
+| 11 | ElevenLabs audio generation (SFX + voiceover + music) | 3-4 hours | P1 |
+| 12 | Audio integration + sound controller | 2-3 hours | P1 |
 | 13 | Proving state animation | 1-2 hours | P2 |
 | 14 | Mobile responsiveness pass | 2 hours | P1 |
 | 15 | Hall of Solvers | 1-2 hours | P2 |
@@ -475,7 +492,6 @@ Two locks connected by a chain, representing the two sides of the intent:
 | Package | Purpose | Size |
 |---------|---------|------|
 | `canvas-confetti` | Confetti explosion on prize claim | ~6kb gzipped |
-| (none needed) | Web Audio API — built into browsers | 0kb |
 | (none needed) | framer-motion — already installed | — |
 | (none needed) | wagmi `useSendCalls` + `useCapabilities` — already included | — |
 
@@ -500,10 +516,13 @@ Minimal new dependencies — most work is custom components + animations.
 
 ---
 
+## Resolved Decisions
+
+1. **Clue image format** — 4:3 aspect ratio image with clue text on it. Resizable. Render inline.
+2. **Sound default** — ON by default. First visit plays audio immediately (with browser autoplay handling).
+3. **ElevenLabs voice** — Deep, gravelly voice for The Trapper. ElevenLabs is MANDATORY for all audio (voiceover, SFX, music). No synth placeholders.
+4. **Bear trap SVG** — Custom-created SVG that fits the dark/mysterious theme. No stock icons.
+
 ## Open Questions
 
-1. **Clue image size** — Should we enforce a max size or aspect ratio for clue images?
-2. **Sound on by default?** — Current plan is muted by default. Want it on by default for first visit?
-3. **ElevenLabs voice** — What voice style? Deep/gravelly? Robotic? Whisper?
-4. **Past winners data** — Do we have historical data to populate Hall of Solvers, or start fresh?
-5. **Custom bear trap SVG** — Should I create one or use a stock icon/illustration?
+1. **Past winners data** — Do we have historical data to populate Hall of Solvers, or start fresh?
