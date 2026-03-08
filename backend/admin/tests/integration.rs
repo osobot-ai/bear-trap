@@ -21,7 +21,7 @@ fn create_and_list_puzzles() {
     let env = "testnet";
 
     let hash = sha256_hex("secret answer");
-    let id = db.create_puzzle(env, 0, &hash, "ipfs://clue").unwrap();
+    let id = db.create_puzzle(env, 0, &hash, "ipfs://clue", None).unwrap();
 
     let puzzles = db.list_puzzles(env).unwrap();
     assert_eq!(puzzles.len(), 1);
@@ -37,8 +37,8 @@ fn create_multiple_puzzles_different_envs() {
 
     let h1 = sha256_hex("answer1");
     let h2 = sha256_hex("answer2");
-    db.create_puzzle("testnet", 0, &h1, "ipfs://1").unwrap();
-    db.create_puzzle("mainnet", 1, &h2, "ipfs://2").unwrap();
+    db.create_puzzle("testnet", 0, &h1, "ipfs://1", None).unwrap();
+    db.create_puzzle("mainnet", 1, &h2, "ipfs://2", None).unwrap();
 
     assert_eq!(db.list_puzzles("testnet").unwrap().len(), 1);
     assert_eq!(db.list_puzzles("mainnet").unwrap().len(), 1);
@@ -51,7 +51,7 @@ fn mark_solved_valid_puzzle() {
     let db = test_db();
     let env = "testnet";
 
-    let id = db.create_puzzle(env, 0, "0xaaa", "").unwrap();
+    let id = db.create_puzzle(env, 0, "0xaaa", "", None).unwrap();
     db.mark_solved(env, id, "0xWINNER").unwrap();
 
     let p = db.get_puzzle(env, id).unwrap().unwrap();
@@ -70,7 +70,7 @@ fn mark_solved_nonexistent_puzzle_does_not_error() {
 fn mark_solved_wrong_env_does_not_affect_puzzle() {
     let db = test_db();
 
-    let id = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
+    let id = db.create_puzzle("testnet", 0, "0xaaa", "", None).unwrap();
     db.mark_solved("mainnet", id, "0xwinner").unwrap();
 
     let p = db.get_puzzle("testnet", id).unwrap().unwrap();
@@ -84,7 +84,7 @@ fn add_and_update_delegation() {
     let db = test_db();
     let env = "testnet";
 
-    let pid = db.create_puzzle(env, 0, "0xaaa", "").unwrap();
+    let pid = db.create_puzzle(env, 0, "0xaaa", "", None).unwrap();
 
     db.add_delegation(env, pid, r#"{"v":1}"#, "0.5").unwrap();
     let d1 = db.get_active_delegation(env, pid).unwrap().unwrap();
@@ -103,7 +103,7 @@ fn delegation_shows_in_puzzle_prize() {
     let db = test_db();
     let env = "testnet";
 
-    let pid = db.create_puzzle(env, 0, "0xaaa", "").unwrap();
+    let pid = db.create_puzzle(env, 0, "0xaaa", "", None).unwrap();
     assert!(
         db.get_puzzle(env, pid).unwrap().unwrap().prize_eth.is_none(),
         "No delegation yet"
