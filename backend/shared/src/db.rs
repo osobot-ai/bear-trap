@@ -30,7 +30,22 @@ pub struct Delegation {
     pub created_at: String,
 }
 
-const _CURRENT_SCHEMA_VERSION: i32 = 1;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofRequest {
+    pub id: i64,
+    pub environment: String,
+    pub puzzle_id: i64,
+    pub solver_address: String,
+    pub boundless_request_id: Option<String>,
+    pub status: String,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub expires_at: Option<i64>,
+}
+
+const _CURRENT_SCHEMA_VERSION: i32 = 2;
 
 impl Db {
     /// Open (or create) a SQLite database at the given path.
@@ -100,6 +115,27 @@ impl Db {
                 ",
             )?;
             self.set_schema_version(1)?;
+        }
+
+        if current < 2 {
+            self.conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS proof_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    environment TEXT NOT NULL,
+                    puzzle_id INTEGER NOT NULL,
+                    solver_address TEXT NOT NULL,
+                    boundless_request_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    result_json TEXT,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    expires_at INTEGER
+                );
+                ",
+            )?;
+            self.set_schema_version(2)?;
         }
 
         Ok(())
@@ -284,6 +320,116 @@ impl Db {
             None => Ok(None),
         }
     }
+
+    // ── Proof Requests ──────────────────────────────────────
+
+    pub fn create_proof_request(
+        &self,
+        env: &str,
+        puzzle_id: i64,
+        solver_address: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO proof_requests (environment, puzzle_id, solver_address) VALUES (?1, ?2, ?3)",
+            params![env, puzzle_id, solver_address],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_proof_request(&self, id: i64) -> Result<Option<ProofRequest>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
+             FROM proof_requests WHERE id = ?1",
+        )?;
+
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(ProofRequest {
+                id: row.get(0)?,
+                environment: row.get(1)?,
+                puzzle_id: row.get(2)?,
+                solver_address: row.get(3)?,
+                boundless_request_id: row.get(4)?,
+                status: row.get(5)?,
+                result_json: row.get(6)?,
+                error_message: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                expires_at: row.get(10)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(Ok(pr)) => Ok(Some(pr)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_proof_request_result(&self, id: i64, result_json: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE proof_requests SET status = 'fulfilled', result_json = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![result_json, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_proof_request_error(&self, id: i64, error_message: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE proof_requests SET status = 'failed', error_message = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![error_message, id],
+        )?;
+        Ok(())
+    }
+
+    /// Check if there's already an active (pending) proof request for this solver+puzzle.
+    pub fn find_active_proof_request(
+        &self,
+        env: &str,
+        puzzle_id: i64,
+        solver_address: &str,
+    ) -> Result<Option<ProofRequest>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
+             FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND solver_address = ?3 AND status = 'pending'
+             AND created_at > datetime('now', '-30 minutes')
+             ORDER BY created_at DESC LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query_map(params![env, puzzle_id, solver_address], |row| {
+            Ok(ProofRequest {
+                id: row.get(0)?,
+                environment: row.get(1)?,
+                puzzle_id: row.get(2)?,
+                solver_address: row.get(3)?,
+                boundless_request_id: row.get(4)?,
+                status: row.get(5)?,
+                result_json: row.get(6)?,
+                error_message: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                expires_at: row.get(10)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(Ok(pr)) => Ok(Some(pr)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_proof_request_boundless_id(
+        &self,
+        id: i64,
+        boundless_request_id: &str,
+        expires_at: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE proof_requests SET boundless_request_id = ?1, expires_at = ?2, updated_at = datetime('now') WHERE id = ?3",
+            params![boundless_request_id, expires_at, id],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -391,5 +537,149 @@ mod tests {
 
         // Different environment starts at 0
         assert_eq!(db.next_puzzle_id("mainnet").unwrap(), 0);
+    }
+
+    // ── Proof Request Tests ─────────────────────────────────
+
+    #[test]
+    fn test_create_proof_request_returns_autoincrement_id() {
+        let db = test_db();
+        let id1 = db.create_proof_request("mainnet", 0, "0xsolver1").unwrap();
+        let id2 = db.create_proof_request("mainnet", 0, "0xsolver2").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn test_get_proof_request() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 42, "0xsolver").unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.id, id);
+        assert_eq!(pr.environment, "mainnet");
+        assert_eq!(pr.puzzle_id, 42);
+        assert_eq!(pr.solver_address, "0xsolver");
+        assert_eq!(pr.status, "pending");
+        assert!(pr.boundless_request_id.is_none());
+        assert!(pr.result_json.is_none());
+        assert!(pr.error_message.is_none());
+    }
+
+    #[test]
+    fn test_get_proof_request_not_found() {
+        let db = test_db();
+        let pr = db.get_proof_request(999).unwrap();
+        assert!(pr.is_none());
+    }
+
+    #[test]
+    fn test_update_proof_request_boundless_id() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_boundless_id(id, "abc123def456", 1700000000).unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.boundless_request_id.as_deref(), Some("abc123def456"));
+        assert_eq!(pr.expires_at, Some(1700000000));
+        assert_eq!(pr.status, "pending"); // status unchanged
+    }
+
+    #[test]
+    fn test_update_proof_request_result_sets_fulfilled() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let result_json = r#"{"seal":"0x1234","journal":"0x5678"}"#;
+        db.update_proof_request_result(id, result_json).unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.status, "fulfilled");
+        assert_eq!(pr.result_json.as_deref(), Some(result_json));
+    }
+
+    #[test]
+    fn test_update_proof_request_error_sets_failed() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_error(id, "Wrong guess").unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.status, "failed");
+        assert_eq!(pr.error_message.as_deref(), Some("Wrong guess"));
+    }
+
+    #[test]
+    fn test_find_active_proof_request_pending() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_some());
+        assert_eq!(active.unwrap().id, id);
+    }
+
+    #[test]
+    fn test_find_active_proof_request_none_after_fulfilled() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_result(id, r#"{"seal":"0x"}"#).unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_none_after_failed() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_error(id, "timeout").unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_environment_isolation() {
+        let db = test_db();
+        db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let active = db.find_active_proof_request("testnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_solver_isolation() {
+        let db = test_db();
+        db.create_proof_request("mainnet", 0, "0xsolver1").unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver2").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_puzzle_isolation() {
+        let db = test_db();
+        db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let active = db.find_active_proof_request("mainnet", 1, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_duplicate_guard_allows_retry_after_failure() {
+        let db = test_db();
+        // First attempt fails
+        let id1 = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_error(id1, "network error").unwrap();
+
+        // Should allow new attempt since first is failed
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+
+        // New request succeeds
+        let id2 = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert_ne!(id1, id2);
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_some());
+    }
+
+    #[test]
+    fn test_schema_migration_idempotent() {
+        let db = test_db();
+        // init() already called, calling again should be safe
+        db.init().unwrap();
+        // proof_requests table should still work
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert_eq!(id, 1);
     }
 }

@@ -14,6 +14,7 @@ pub struct ProverConfig {
     pub rpc_url: String,
     pub private_key: String,
     pub pinata_jwt: Option<String>,
+    pub boundless_market_address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,14 +196,25 @@ fn load_guest_elf() -> Result<Vec<u8>> {
     )
 }
 
-pub async fn generate_proof(
+pub struct SubmitProofResult {
+    pub boundless_request_id: String,
+    pub expires_at: u64,
+}
+
+/// Result of querying Boundless status — includes fulfillment data when fulfilled.
+pub struct BoundlessStatusResult {
+    pub status: String,
+    pub proof_result: Option<ProofResult>,
+}
+
+pub async fn submit_proof(
     config: &ProverConfig,
     guess: &str,
     solver_address: &str,
     expected_hash: &str,
     puzzle_id: u64,
     operator_signer: &PrivateKeySigner,
-) -> Result<ProofResult> {
+) -> Result<SubmitProofResult> {
     use alloy_primitives::{Address, FixedBytes, U256};
     use alloy_sol_types::{sol, SolValue};
     use boundless_market::client::Client;
@@ -270,16 +282,12 @@ pub async fn generate_proof(
     tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
     tracing::info!("Storage config: uploader={:?}, pinata_jwt_set={}", storage_config.storage_uploader, config.pinata_jwt.is_some());
 
-    // Parse image ID from ImageID.sol constant
     let image_id_hex = "8da19e69de35e4e648d8ca7e6779069b50c09e9241ddd8cac6a6a199d0c7e8ed";
     let image_id_bytes: [u8; 32] = hex::decode(image_id_hex)
         .expect("Invalid image ID hex")
         .try_into()
         .expect("Image ID must be 32 bytes");
 
-    // Set cycles + journal + image_id to skip preflight execution.
-    // The Boundless prover will re-execute and compute the real values.
-    // We use a generous cycle estimate; the market auction handles pricing.
     let request = client
         .new_request()
         .with_program(guest_elf)
@@ -288,7 +296,6 @@ pub async fn generate_proof(
         .with_cycles(1 << 24)
         .with_journal(risc0_zkvm::Journal::new(vec![]));
 
-    // Try offchain first, fall back to onchain if 403/unavailable
     let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
         Ok(result) => {
             tracing::info!("Proof request submitted offchain");
@@ -310,23 +317,90 @@ pub async fn generate_proof(
         expires_at
     );
 
-    let fulfillment = client
-        .wait_for_request_fulfillment(request_id, Duration::from_secs(10), expires_at)
-        .await?;
-
-    tracing::info!("Proof request {:x} fulfilled!", request_id);
-
-    let fulfillment_data = fulfillment.data().map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
-    let seal = fulfillment.seal.to_vec();
-    let journal = fulfillment_data.journal().ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?.to_vec();
-
-    Ok(ProofResult {
-        seal,
-        journal,
-        solver_address: solver_address.to_string(),
-        solution_hash: expected_hash.to_string(),
-        puzzle_id,
+    Ok(SubmitProofResult {
+        boundless_request_id: format!("{:x}", request_id),
+        expires_at,
     })
+}
+
+/// Query Boundless for proof request status. When fulfilled, also fetches the
+/// fulfillment data (seal + journal) so the caller can write it to DB in one shot.
+pub async fn query_boundless_status(
+    config: &ProverConfig,
+    boundless_request_id: &str,
+    expires_at: Option<u64>,
+    solver_address: &str,
+    solution_hash: &str,
+    puzzle_id: u64,
+) -> Result<BoundlessStatusResult> {
+    use alloy::primitives::{Address, U256};
+    use alloy::providers::ProviderBuilder;
+    use boundless_market::contracts::boundless_market::BoundlessMarketService;
+    use boundless_market::contracts::RequestStatus;
+
+    let rpc_url: url::Url = config.rpc_url.parse()?;
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+    let market_address: Address = config.boundless_market_address.parse()
+        .map_err(|e| anyhow::anyhow!("Invalid boundless market address '{}': {e}", config.boundless_market_address))?;
+    let caller: Address = Address::ZERO;
+
+    let service = BoundlessMarketService::new(market_address, provider, caller);
+
+    let clean_id = boundless_request_id.strip_prefix("0x").unwrap_or(boundless_request_id);
+    let request_id = U256::from_str_radix(clean_id, 16)
+        .map_err(|e| anyhow::anyhow!("Invalid boundless request ID '{}': {}", boundless_request_id, e))?;
+
+    let status = service.get_status(request_id, expires_at).await
+        .map_err(|e| anyhow::anyhow!("Failed to query Boundless status: {e}"))?;
+
+    match status {
+        RequestStatus::Fulfilled => {
+            // Fetch fulfillment data — status is already fulfilled so this returns immediately
+            let expires = expires_at.unwrap_or(u64::MAX);
+            match service.wait_for_request_fulfillment(request_id, Duration::from_secs(1), expires).await {
+                Ok(fulfillment) => {
+                    let fulfillment_data = fulfillment.data()
+                        .map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
+                    let seal = fulfillment.seal.to_vec();
+                    let journal = fulfillment_data.journal()
+                        .ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?
+                        .to_vec();
+
+                    Ok(BoundlessStatusResult {
+                        status: "fulfilled".into(),
+                        proof_result: Some(ProofResult {
+                            seal,
+                            journal,
+                            solver_address: solver_address.to_string(),
+                            solution_hash: solution_hash.to_string(),
+                            puzzle_id,
+                        }),
+                    })
+                }
+                Err(e) => {
+                    tracing::error!("Boundless reports fulfilled but failed to fetch data: {e}");
+                    // Return fulfilled status but without data — caller should retry
+                    Ok(BoundlessStatusResult {
+                        status: "fulfilled".into(),
+                        proof_result: None,
+                    })
+                }
+            }
+        }
+        other => {
+            let status_str = match other {
+                RequestStatus::Unknown => "unknown",
+                RequestStatus::Locked => "locked",
+                RequestStatus::Expired => "expired",
+                _ => "unknown",
+            };
+            Ok(BoundlessStatusResult {
+                status: status_str.to_string(),
+                proof_result: None,
+            })
+        }
+    }
 }
 
 #[cfg(test)]

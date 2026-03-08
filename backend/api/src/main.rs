@@ -101,13 +101,34 @@ struct ErrorResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProveSuccessResponse {
-    seal: String,
-    journal: String,
-    solver_address: String,
-    solution_hash: String,
+struct ProveSubmittedResponse {
+    proof_request_id: i64,
+    status: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProofStatusResponse {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    journal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    solver_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    solution_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     delegation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     prize_eth: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    puzzle_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -446,6 +467,36 @@ async fn prove(
     let contract = BearTrap::new(bear_trap_addr, provider);
     let puzzle_id_u256 = alloy::primitives::U256::from(req.puzzle_id as u64);
 
+    // Check for duplicate active proof request (prevent double-burn)
+    {
+        let env_check = state.environment.clone();
+        let solver_check = req.solver_address.clone();
+        let pid = puzzle_id;
+        let state_check = Arc::clone(&state);
+        let existing = tokio::task::spawn_blocking(move || {
+            let db = state_check.db.lock().expect("db mutex poisoned");
+            db.find_active_proof_request(&env_check, pid, &solver_check)
+        })
+        .await
+        .expect("spawn_blocking panicked");
+
+        if let Ok(Some(active)) = existing {
+            tracing::warn!(
+                "Active proof request {} already exists for solver {} puzzle {}",
+                active.id, req.solver_address, puzzle_id
+            );
+            return (
+                StatusCode::CONFLICT,
+                Json(ProveSubmittedResponse {
+                    proof_request_id: active.id,
+                    status: active.status,
+                    message: "A proof request is already in progress. Poll for status.".into(),
+                }),
+            )
+                .into_response();
+        }
+    }
+
     tracing::info!(
         "Calling useTicket for {} on puzzle {}",
         req.solver_address,
@@ -498,18 +549,115 @@ async fn prove(
         receipt.transaction_hash,
     );
 
-    let proof_result = if state.environment == "testnet" {
+    // Create proof request record in DB
+    let env_for_db = state.environment.clone();
+    let solver_for_db = req.solver_address.clone();
+    let proof_request_id = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            db.create_proof_request(&env_for_db, puzzle_id, &solver_for_db)
+        })
+        .await
+        .expect("spawn_blocking panicked")
+    };
+
+    let proof_request_id = match proof_request_id {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to create proof request: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to create proof request".into(),
+                    ticket_burned: Some(true),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if state.environment == "testnet" {
         tracing::info!("Using mock proving (testnet mode)");
-        prover::generate_mock_proof(
+        let mock_result = prover::generate_mock_proof(
             &req.passphrase,
             &req.solver_address,
             &puzzle.solution_hash,
             req.puzzle_id as u64,
             &state.operator_signer,
         )
-        .await
+        .await;
+
+        match mock_result {
+            Ok(result) => {
+                let (delegation_value, prize_eth) = match &delegation {
+                    Some(d) => (
+                        serde_json::from_str::<serde_json::Value>(&d.delegation_json).ok(),
+                        Some(d.prize_eth.clone()),
+                    ),
+                    None => (None, None),
+                };
+
+                let fulfilled_data = serde_json::json!({
+                    "seal": format!("0x{}", hex::encode(&result.seal)),
+                    "journal": format!("0x{}", hex::encode(&result.journal)),
+                    "solverAddress": result.solver_address,
+                    "solutionHash": result.solution_hash,
+                    "puzzleId": result.puzzle_id,
+                    "delegation": delegation_value,
+                    "prizeEth": prize_eth,
+                });
+
+                let pr_id = proof_request_id.clone();
+                let state2 = Arc::clone(&state);
+                let data_str = fulfilled_data.to_string();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let db = state2.db.lock().expect("db mutex poisoned");
+                    if let Err(e) = db.update_proof_request_result(pr_id, &data_str) {
+                        tracing::error!("Failed to update proof request result: {e}");
+                    }
+                })
+                .await;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let is_wrong_guess = msg.contains("Wrong guess");
+
+                let pr_id = proof_request_id.clone();
+                let state2 = Arc::clone(&state);
+                let error_msg = msg.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let db = state2.db.lock().expect("db mutex poisoned");
+                    if let Err(e) = db.update_proof_request_error(pr_id, &error_msg) {
+                        tracing::error!("Failed to update proof request error: {e}");
+                    }
+                })
+                .await;
+
+                if is_wrong_guess {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(ErrorResponse {
+                            error: "Wrong guess. Your ticket has been consumed.".into(),
+                            ticket_burned: Some(true),
+                        }),
+                    )
+                        .into_response();
+                } else {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: msg,
+                            ticket_burned: Some(true),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+        }
     } else {
-        prover::generate_proof(
+        // Mainnet: submit to Boundless, save request ID, return immediately
+        let submit_result = prover::submit_proof(
             &state.prover_config,
             &req.passphrase,
             &req.solver_address,
@@ -517,62 +665,372 @@ async fn prove(
             req.puzzle_id as u64,
             &state.operator_signer,
         )
+        .await;
+
+        match submit_result {
+            Ok(submission) => {
+                let boundless_id = submission.boundless_request_id.clone();
+                let exp = submission.expires_at as i64;
+                let state2 = Arc::clone(&state);
+                let pr_id = proof_request_id;
+                let _ = tokio::task::spawn_blocking(move || {
+                    let db = state2.db.lock().expect("db mutex poisoned");
+                    if let Err(e) = db.update_proof_request_boundless_id(pr_id, &boundless_id, exp) {
+                        tracing::error!("Failed to update boundless request ID: {e}");
+                    }
+                })
+                .await;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let is_wrong_guess = msg.contains("Wrong guess");
+
+                let state2 = Arc::clone(&state);
+                let error_msg = msg.clone();
+                let pr_id = proof_request_id;
+                let _ = tokio::task::spawn_blocking(move || {
+                    let db = state2.db.lock().expect("db mutex poisoned");
+                    if let Err(e) = db.update_proof_request_error(pr_id, &error_msg) {
+                        tracing::error!("Failed to update proof request error: {e}");
+                    }
+                })
+                .await;
+
+                if is_wrong_guess {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(ErrorResponse {
+                            error: "Wrong guess. Your ticket has been consumed.".into(),
+                            ticket_burned: Some(true),
+                        }),
+                    )
+                        .into_response();
+                } else {
+                    tracing::error!("Proof submission failed: {msg}");
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: msg,
+                            ticket_burned: Some(true),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(ProveSubmittedResponse {
+            proof_request_id,
+            status: "pending".into(),
+            message: "Proof request submitted. Poll /api/prove/status/{id} for updates.".into(),
+        }),
+    )
+        .into_response()
+}
+
+async fn proof_status(
+    State(state): State<Arc<AppState>>,
+    Path(proof_request_id): Path<i64>,
+) -> impl IntoResponse {
+    let db_result = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            db.get_proof_request(proof_request_id)
+        })
         .await
+        .expect("spawn_blocking panicked")
     };
 
-    match proof_result {
-        Ok(result) => {
-            // Parse delegation JSON for inclusion in response
-            let (delegation_value, prize_eth) = match delegation {
-                Some(d) => (
-                    serde_json::from_str::<serde_json::Value>(&d.delegation_json).ok(),
-                    Some(d.prize_eth),
-                ),
-                None => (None, None),
-            };
+    match db_result {
+        Ok(Some(pr)) => {
+            match pr.status.as_str() {
+                "fulfilled" => {
+                    let result: serde_json::Value = pr
+                        .result_json
+                        .and_then(|r| serde_json::from_str(&r).ok())
+                        .unwrap_or_default();
 
+                    (
+                        StatusCode::OK,
+                        Json(ProofStatusResponse {
+                            status: "fulfilled".into(),
+                            message: None,
+                            error: None,
+                            seal: result.get("seal").and_then(|v| v.as_str()).map(String::from),
+                            journal: result.get("journal").and_then(|v| v.as_str()).map(String::from),
+                            solver_address: result.get("solverAddress").and_then(|v| v.as_str()).map(String::from),
+                            solution_hash: result.get("solutionHash").and_then(|v| v.as_str()).map(String::from),
+                            delegation: result.get("delegation").cloned(),
+                            prize_eth: result.get("prizeEth").and_then(|v| v.as_str()).map(String::from),
+                            puzzle_id: result.get("puzzleId").and_then(|v| v.as_i64()),
+                        }),
+                    )
+                        .into_response()
+                }
+                "failed" => (
+                    StatusCode::OK,
+                    Json(ProofStatusResponse {
+                        status: "failed".into(),
+                        message: None,
+                        error: Some(pr.error_message.unwrap_or_else(|| "Proof generation failed".into())),
+                        seal: None,
+                        journal: None,
+                        solver_address: None,
+                        solution_hash: None,
+                        delegation: None,
+                        prize_eth: None,
+                        puzzle_id: None,
+                    }),
+                )
+                    .into_response(),
+                "expired" => (
+                    StatusCode::OK,
+                    Json(ProofStatusResponse {
+                        status: "expired".into(),
+                        message: None,
+                        error: Some("Proof request expired".into()),
+                        seal: None,
+                        journal: None,
+                        solver_address: None,
+                        solution_hash: None,
+                        delegation: None,
+                        prize_eth: None,
+                        puzzle_id: None,
+                    }),
+                )
+                    .into_response(),
+                "pending" => {
+                    match &pr.boundless_request_id {
+                        None => (
+                            StatusCode::OK,
+                            Json(ProofStatusResponse {
+                                status: "pending".into(),
+                                message: Some("Submitting to prover network...".into()),
+                                error: None,
+                                seal: None,
+                                journal: None,
+                                solver_address: None,
+                                solution_hash: None,
+                                delegation: None,
+                                prize_eth: None,
+                                puzzle_id: None,
+                            }),
+                        )
+                            .into_response(),
+                        Some(boundless_id) => {
+                            let expires_at = pr.expires_at.map(|e| e as u64);
+                            match prover::query_boundless_status(
+                                &state.prover_config,
+                                boundless_id,
+                                expires_at,
+                                &pr.solver_address,
+                                "", // solution_hash not needed for status, only for ProofResult
+                                pr.puzzle_id as u64,
+                            )
+                            .await
+                            {
+                                Ok(status_result) => {
+                                    match status_result.status.as_str() {
+                                        "fulfilled" => {
+                                            if let Some(proof_result) = status_result.proof_result {
+                                                // Fetch delegation for this puzzle
+                                                let env = pr.environment.clone();
+                                                let pid = pr.puzzle_id;
+                                                let state3 = Arc::clone(&state);
+                                                let delegation_data = tokio::task::spawn_blocking(move || {
+                                                    let db = state3.db.lock().expect("db mutex poisoned");
+                                                    db.get_active_delegation(&env, pid)
+                                                })
+                                                .await
+                                                .expect("spawn_blocking panicked")
+                                                .ok()
+                                                .flatten();
+
+                                                let (delegation_value, prize_eth) = match &delegation_data {
+                                                    Some(d) => (
+                                                        serde_json::from_str::<serde_json::Value>(&d.delegation_json).ok(),
+                                                        Some(d.prize_eth.clone()),
+                                                    ),
+                                                    None => (None, None),
+                                                };
+
+                                                let fulfilled_data = serde_json::json!({
+                                                    "seal": format!("0x{}", hex::encode(&proof_result.seal)),
+                                                    "journal": format!("0x{}", hex::encode(&proof_result.journal)),
+                                                    "solverAddress": proof_result.solver_address,
+                                                    "solutionHash": proof_result.solution_hash,
+                                                    "puzzleId": proof_result.puzzle_id,
+                                                    "delegation": delegation_value,
+                                                    "prizeEth": prize_eth,
+                                                });
+
+                                                // Write to DB so subsequent polls hit the cache
+                                                let data_str = fulfilled_data.to_string();
+                                                let state4 = Arc::clone(&state);
+                                                let pr_id = proof_request_id;
+                                                let _ = tokio::task::spawn_blocking(move || {
+                                                    let db = state4.db.lock().expect("db mutex poisoned");
+                                                    if let Err(e) = db.update_proof_request_result(pr_id, &data_str) {
+                                                        tracing::error!("Failed to cache proof result: {e}");
+                                                    }
+                                                })
+                                                .await;
+
+                                                (
+                                                    StatusCode::OK,
+                                                    Json(ProofStatusResponse {
+                                                        status: "fulfilled".into(),
+                                                        message: None,
+                                                        error: None,
+                                                        seal: Some(format!("0x{}", hex::encode(&proof_result.seal))),
+                                                        journal: Some(format!("0x{}", hex::encode(&proof_result.journal))),
+                                                        solver_address: Some(proof_result.solver_address),
+                                                        solution_hash: Some(proof_result.solution_hash),
+                                                        delegation: delegation_value,
+                                                        prize_eth,
+                                                        puzzle_id: Some(proof_result.puzzle_id as i64),
+                                                    }),
+                                                )
+                                                    .into_response()
+                                            } else {
+                                                // Fulfilled but couldn't fetch data yet — tell client to retry
+                                                (
+                                                    StatusCode::OK,
+                                                    Json(ProofStatusResponse {
+                                                        status: "locked".into(),
+                                                        message: Some("Proof fulfilled, retrieving data...".into()),
+                                                        error: None,
+                                                        seal: None,
+                                                        journal: None,
+                                                        solver_address: None,
+                                                        solution_hash: None,
+                                                        delegation: None,
+                                                        prize_eth: None,
+                                                        puzzle_id: None,
+                                                    }),
+                                                )
+                                                    .into_response()
+                                            }
+                                        }
+                                        "expired" => {
+                                            let state2 = Arc::clone(&state);
+                                            let pr_id = proof_request_id;
+                                            let _ = tokio::task::spawn_blocking(move || {
+                                                let db = state2.db.lock().expect("db mutex poisoned");
+                                                let _ = db.update_proof_request_error(pr_id, "Proof request expired on Boundless");
+                                            })
+                                            .await;
+
+                                            (
+                                                StatusCode::OK,
+                                                Json(ProofStatusResponse {
+                                                    status: "expired".into(),
+                                                    message: None,
+                                                    error: Some("Proof request expired".into()),
+                                                    seal: None,
+                                                    journal: None,
+                                                    solver_address: None,
+                                                    solution_hash: None,
+                                                    delegation: None,
+                                                    prize_eth: None,
+                                                    puzzle_id: None,
+                                                }),
+                                            )
+                                                .into_response()
+                                        }
+                                        _ => {
+                                            let message = match status_result.status.as_str() {
+                                                "unknown" => "Proof request submitted, waiting for prover...",
+                                                "locked" => "A prover is generating your proof...",
+                                                _ => "Proof request in progress...",
+                                            };
+
+                                            (
+                                                StatusCode::OK,
+                                                Json(ProofStatusResponse {
+                                                    status: status_result.status,
+                                                    message: Some(message.into()),
+                                                    error: None,
+                                                    seal: None,
+                                                    journal: None,
+                                                    solver_address: None,
+                                                    solution_hash: None,
+                                                    delegation: None,
+                                                    prize_eth: None,
+                                                    puzzle_id: None,
+                                                }),
+                                            )
+                                                .into_response()
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to query Boundless status: {e}");
+                                    (
+                                        StatusCode::OK,
+                                        Json(ProofStatusResponse {
+                                            status: "pending".into(),
+                                            message: Some("Proof request in progress...".into()),
+                                            error: None,
+                                            seal: None,
+                                            journal: None,
+                                            solver_address: None,
+                                            solution_hash: None,
+                                            delegation: None,
+                                            prize_eth: None,
+                                            puzzle_id: None,
+                                        }),
+                                    )
+                                        .into_response()
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => (
+                    StatusCode::OK,
+                    Json(ProofStatusResponse {
+                        status: pr.status,
+                        message: Some("Unknown status".into()),
+                        error: None,
+                        seal: None,
+                        journal: None,
+                        solver_address: None,
+                        solution_hash: None,
+                        delegation: None,
+                        prize_eth: None,
+                        puzzle_id: None,
+                    }),
+                )
+                    .into_response(),
+            }
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Proof request not found".into(),
+                ticket_burned: None,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get proof request: {e}");
             (
-                StatusCode::OK,
-                Json(ProveSuccessResponse {
-                    seal: format!("0x{}", hex::encode(&result.seal)),
-                    journal: format!("0x{}", hex::encode(&result.journal)),
-                    solver_address: result.solver_address,
-                    solution_hash: result.solution_hash,
-                    delegation: delegation_value,
-                    prize_eth,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to read proof request".into(),
+                    ticket_burned: None,
                 }),
             )
                 .into_response()
         }
-        Err(e) => {
-            let msg = e.to_string();
-            let is_wrong_guess = msg.contains("Wrong guess");
-
-            if is_wrong_guess {
-                (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(ErrorResponse {
-                        error: "Wrong guess. Your ticket has been consumed.".into(),
-                        ticket_burned: Some(true),
-                    }),
-                )
-                    .into_response()
-            } else {
-                tracing::error!("Proof generation failed: {msg}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: msg,
-                        ticket_burned: Some(true), // ticket was already burned on-chain
-                    }),
-                )
-                    .into_response()
-            }
-        }
     }
 }
 
-/// Health check endpoint.
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
 }
@@ -912,10 +1370,14 @@ async fn main() -> anyhow::Result<()> {
             .expect("OPERATOR_PRIVATE_KEY is not a valid private key")
     };
 
+    let boundless_market_address = env::var("BOUNDLESS_MARKET_ADDRESS")
+        .unwrap_or_else(|_| "0xfd152dadc5183870710fe54f939eae3ab9f0fe82".to_string());
+
     let prover_config = ProverConfig {
         rpc_url: rpc_url.clone(),
         private_key: boundless_private_key,
         pinata_jwt,
+        boundless_market_address,
     };
 
     let state = Arc::new(AppState {
@@ -952,6 +1414,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/puzzles", get(list_puzzles))
         .route("/api/puzzles/{id}", get(get_puzzle))
         .route("/api/prove", post(prove))
+        .route("/api/prove/status/{proof_request_id}", get(proof_status))
         .route("/api/mark-solved", post(mark_solved))
         .route("/health", get(health))
         .layer(cors)

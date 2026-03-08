@@ -1286,6 +1286,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shared",
+ "tokio",
 ]
 
 [[package]]
@@ -5049,6 +5050,7 @@ dependencies = [
 name = "shared"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "rusqlite",
  "serde",
  "serde_json",
