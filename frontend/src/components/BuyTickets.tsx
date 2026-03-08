@@ -1,8 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { formatUnits, parseUnits } from "viem";
+import {
+  useAccount,
+  useReadContract,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
+import { useCapabilities, useSendCalls } from "wagmi/experimental";
+import { formatUnits, encodeFunctionData } from "viem";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { erc20Abi } from "@/lib/abi/erc20";
 import {
@@ -14,9 +20,22 @@ import {
 } from "@/lib/contracts";
 
 export function BuyTickets() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chain } = useAccount();
   const [ticketAmount, setTicketAmount] = useState("1");
   const [step, setStep] = useState<"approve" | "buy">("approve");
+  const [batchStatus, setBatchStatus] = useState<"idle" | "pending" | "confirming" | "success" | "error">("idle");
+
+  // Detect EIP-5792 batch capabilities
+  const { data: capabilities } = useCapabilities();
+  const currentChainId = chain?.id;
+  const chainIdHex = currentChainId ? (`0x${currentChainId.toString(16)}` as `0x${string}`) : undefined;
+  const atomicStatus = chainIdHex
+    ? (capabilities as Record<string, Record<string, { status?: string }>> | undefined)?.[chainIdHex]?.atomic?.status
+    : undefined;
+  const supportsBatch = atomicStatus === "supported" || atomicStatus === "ready";
+
+  // Batched sendCalls hook
+  const { sendCalls, isPending: isBatchPending } = useSendCalls();
 
   // Read $OSO balance
   const { data: osoBalance } = useReadContract({
@@ -119,7 +138,49 @@ export function BuyTickets() {
     });
   }
 
-  const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming;
+  function handleBatchBuy() {
+    if (!parsedAmount || parsedAmount <= 0) return;
+    setBatchStatus("pending");
+
+    const approveData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [BEAR_TRAP_ADDRESS, totalCost],
+    });
+
+    const buyData = encodeFunctionData({
+      abi: bearTrapAbi,
+      functionName: "buyTickets",
+      args: [BigInt(parsedAmount)],
+    });
+
+    sendCalls(
+      {
+        calls: [
+          {
+            to: OSO_TOKEN_ADDRESS,
+            data: approveData,
+          },
+          {
+            to: BEAR_TRAP_ADDRESS,
+            data: buyData,
+          },
+        ],
+      },
+      {
+        onSuccess: () => {
+          setBatchStatus("success");
+          refetchTickets();
+          refetchAllowance();
+        },
+        onError: () => {
+          setBatchStatus("error");
+        },
+      },
+    );
+  }
+
+  const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming || isBatchPending || batchStatus === "pending";
 
   const formattedBalance = osoBalance
     ? parseFloat(formatUnits(osoBalance, 18)).toLocaleString(undefined, {
@@ -215,7 +276,41 @@ export function BuyTickets() {
               Connect your wallet to buy tickets
             </p>
           </div>
+        ) : supportsBatch ? (
+          /* Batched flow — single button, one wallet popup */
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs font-mono text-trap-muted">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold bg-trap-gold/20 text-trap-gold border border-trap-gold/30">
+                ⚡
+              </span>
+              <span className="text-trap-gold">One-click buy (batched)</span>
+            </div>
+
+            <button
+              onClick={handleBatchBuy}
+              disabled={isProcessing || parsedAmount <= 0 || !hasEnoughBalance}
+              className="w-full rounded-lg bg-trap-gold/10 border border-trap-gold/30 px-4 py-3 font-mono text-sm font-medium text-trap-gold hover:bg-trap-gold/20 hover:border-trap-gold/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-gold/10"
+            >
+              {isBatchPending || batchStatus === "pending"
+                ? "Confirming..."
+                : !hasEnoughBalance
+                ? "Insufficient $OSO"
+                : `Buy ${parsedAmount} Ticket${parsedAmount !== 1 ? "s" : ""}`}
+            </button>
+
+            {batchStatus === "success" && (
+              <p className="text-xs font-mono text-trap-green text-center">
+                Tickets purchased successfully.
+              </p>
+            )}
+            {batchStatus === "error" && (
+              <p className="text-xs font-mono text-trap-red text-center">
+                Transaction failed. Please try again.
+              </p>
+            )}
+          </div>
         ) : (
+          /* Fallback 2-step flow */
           <div className="space-y-3">
             {/* Step indicator */}
             <div className="flex items-center gap-2 text-xs font-mono text-trap-muted">
