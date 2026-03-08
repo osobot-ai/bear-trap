@@ -65,7 +65,7 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="h-1 w-1 rounded-full bg-trap-green" />
-                <span className="text-trap-muted">On-chain delegation</span>
+                <span className="text-trap-muted">Onchain delegation</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="h-1 w-1 rounded-full bg-trap-green" />
