@@ -32,8 +32,8 @@ const VOICE_FILES: Record<string, string> = {
   "trapper-wrong": "/audio/trapper-wrong.mp3",
   "trapper-proof-valid": "/audio/trapper-proof-valid.mp3",
   "trapper-broken": "/audio/trapper-broken.mp3",
-  // These will be added when ElevenLabs quota is available:
-  // "trapper-teaser": "/audio/trapper-teaser.mp3",
+  "trapper-teaser": "/audio/trapper-teaser.mp3",
+  // Will be added when API key credit quota refreshes:
   // "trapper-error": "/audio/trapper-error.mp3",
 };
 

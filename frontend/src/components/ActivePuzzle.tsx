@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSoundEngine } from "./SoundController";
 import { CountdownTimer } from "./CountdownTimer";
 import { ClueDisplay } from "./ClueDisplay";
 import { IntentVisualizer } from "./IntentVisualizer";
@@ -25,6 +26,8 @@ interface ActivePuzzleResponse {
 }
 
 export function ActivePuzzle() {
+  const { playVoice, playSfx } = useSoundEngine();
+  const hasPlayedTeaserRef = useRef(false);
   const [data, setData] = useState<ActivePuzzleResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +56,24 @@ export function ActivePuzzle() {
     const interval = setInterval(fetchActivePuzzle, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Play teaser voiceover on first countdown state render
+  const activeStatus = data?.status;
+  useEffect(() => {
+    if (activeStatus === "countdown" && !hasPlayedTeaserRef.current) {
+      hasPlayedTeaserRef.current = true;
+      // Delay slightly so user hears it after page loads
+      const timer = setTimeout(() => playVoice("trapper-teaser"), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [activeStatus, playVoice]);
+
+  // Start ambient drone on live puzzle
+  useEffect(() => {
+    if (activeStatus === "live") {
+      playSfx("trap_ambient");
+    }
+  }, [activeStatus, playSfx]);
 
   if (isLoading) {
     return (
