@@ -6,7 +6,7 @@ ELEVENLABS_KEY=$(python3 -c "import json; print(json.load(open('/home/osobot/.op
 OUTPUT_DIR="/home/osobot/projects/bear-trap/frontend/public/audio"
 mkdir -p "$OUTPUT_DIR"
 
-VOICE_ID="SOYHLrjzK2X1ezoPC6cr"  # Harry - Fierce Warrior
+VOICE_ID="Ey0uxikca5MyBcfS3DhG"  # The Trapper (custom designed voice)
 MODEL="eleven_multilingual_v2"
 
 generate_voice() {
@@ -97,7 +97,7 @@ echo "=== VOICEOVER — Missing Lines ==="
 generate_voice "trapper-broken.mp3" "The trap is broken. But I'll return." 0.3 0.8
 
 # Missing lines
-generate_voice "trapper-teaser.mp3" "Something is coming. The trap is being set." 0.25 0.7
+generate_voice "trapper-teaser.mp3" "Something is coming... The trap is being set." 0.25 0.7
 
 generate_voice "trapper-error.mp3" "The connection is unstable. The trap waits." 0.35 0.5
 
