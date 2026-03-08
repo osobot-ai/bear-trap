@@ -340,7 +340,8 @@ Implementation: All sounds generated procedurally with Web Audio API oscillators
 
 ElevenLabs is **required** for all audio in Bear Trap. No placeholder synth sounds — everything ships with ElevenLabs-generated audio.
 
-**Voiceover Lines (The Trapper — deep, gravelly voice):**
+**Voiceover Lines (The Trapper — custom ElevenLabs voice `Ey0uxikca5MyBcfS3DhG`):**
+**Voice**: Custom-designed via Voice Design API — older American male, deep gravelly rasp, slow and deliberate, mountain trapper in grizzly country.
 - *"The trap is set. Begin."* (countdown end)
 - *"Wrong. The trap holds."* (wrong guess)
 - *"The proof is valid. Claim what's yours."* (proof ready)
