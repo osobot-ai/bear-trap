@@ -8,6 +8,8 @@ interface SoundContextValue {
   toggleMute: () => void;
   playSfx: (event: SoundEventType) => void;
   playVoice: (name: VoiceLineType) => void;
+  playMusic: (track: "ambient" | "victory") => void;
+  stopMusic: () => void;
 }
 
 const SoundContext = createContext<SoundContextValue>({
@@ -15,6 +17,8 @@ const SoundContext = createContext<SoundContextValue>({
   toggleMute: () => {},
   playSfx: () => {},
   playVoice: () => {},
+  playMusic: () => {},
+  stopMusic: () => {},
 });
 
 export function useSoundEngine() {
@@ -57,8 +61,16 @@ export function SoundProvider({ children }: { children: React.ReactNode }) {
     getSoundEngine().playVoice(name);
   }, []);
 
+  const playMusic = useCallback((track: "ambient" | "victory") => {
+    getSoundEngine().playMusic(track);
+  }, []);
+
+  const stopMusic = useCallback(() => {
+    getSoundEngine().stopMusic();
+  }, []);
+
   return (
-    <SoundContext.Provider value={{ muted, toggleMute, playSfx, playVoice }}>
+    <SoundContext.Provider value={{ muted, toggleMute, playSfx, playVoice, playMusic, stopMusic }}>
       {children}
     </SoundContext.Provider>
   );

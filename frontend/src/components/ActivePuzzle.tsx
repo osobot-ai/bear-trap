@@ -26,7 +26,7 @@ interface ActivePuzzleResponse {
 }
 
 export function ActivePuzzle() {
-  const { playVoice, playSfx } = useSoundEngine();
+  const { playVoice, playSfx, playMusic } = useSoundEngine();
   const hasPlayedTeaserRef = useRef(false);
   const [data, setData] = useState<ActivePuzzleResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,12 +68,13 @@ export function ActivePuzzle() {
     }
   }, [activeStatus, playVoice]);
 
-  // Start ambient drone on live puzzle
+  // Start ambient drone + background music on live puzzle
   useEffect(() => {
     if (activeStatus === "live") {
       playSfx("trap_ambient");
+      playMusic("ambient");
     }
-  }, [activeStatus, playSfx]);
+  }, [activeStatus, playSfx, playMusic]);
 
   if (isLoading) {
     return (

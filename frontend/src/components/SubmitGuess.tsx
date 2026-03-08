@@ -76,7 +76,7 @@ interface ProofStatusResult {
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
-  const { playSfx, playVoice } = useSoundEngine();
+  const { playSfx, playVoice, playMusic, stopMusic } = useSoundEngine();
   const [puzzleId, setPuzzleId] = useState("0");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
@@ -100,7 +100,9 @@ export function SubmitGuess() {
         playVoice("trapper-proof-valid");
         break;
       case "success":
+        stopMusic(); // Stop ambient music
         playSfx("prize_claimed");
+        playMusic("victory");
         setTimeout(() => playVoice("trapper-broken"), 300);
         break;
     }
