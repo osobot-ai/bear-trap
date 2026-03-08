@@ -343,6 +343,41 @@ pub async fn submit_proof(
     })
 }
 
+pub async fn query_boundless_status(
+    config: &ProverConfig,
+    boundless_request_id: &str,
+    expires_at: Option<u64>,
+) -> Result<String> {
+    use alloy::primitives::{Address, U256};
+    use alloy::providers::ProviderBuilder;
+    use boundless_market::contracts::boundless_market::BoundlessMarketService;
+    use boundless_market::contracts::RequestStatus;
+
+    let rpc_url: url::Url = config.rpc_url.parse()?;
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+    let market_address: Address = "0xfd152dadc5183870710fe54f939eae3ab9f0fe82".parse()?;
+    let caller: Address = Address::ZERO;
+
+    let service = BoundlessMarketService::new(market_address, provider, caller);
+
+    let clean_id = boundless_request_id.strip_prefix("0x").unwrap_or(boundless_request_id);
+    let request_id = U256::from_str_radix(clean_id, 16)
+        .map_err(|e| anyhow::anyhow!("Invalid boundless request ID '{}': {}", boundless_request_id, e))?;
+
+    let status = service.get_status(request_id, expires_at).await
+        .map_err(|e| anyhow::anyhow!("Failed to query Boundless status: {e}"))?;
+
+    let status_str = match status {
+        RequestStatus::Unknown => "unknown",
+        RequestStatus::Locked => "locked",
+        RequestStatus::Fulfilled => "fulfilled",
+        RequestStatus::Expired => "expired",
+    };
+
+    Ok(status_str.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

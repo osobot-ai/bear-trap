@@ -689,25 +689,6 @@ async fn prove(
                 let delegation_bg = delegation;
                 let puzzle_id_bg = req.puzzle_id;
                 tokio::spawn(async move {
-                    // Update status to "locked" after a short delay
-                    // (Boundless typically locks within 30-60s)
-                    {
-                        let state_lock = Arc::clone(&state_bg);
-                        let pr_id_lock = pr_id;
-                        tokio::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                            let _ = tokio::task::spawn_blocking(move || {
-                                let db = state_lock.db.lock().expect("db mutex poisoned");
-                                // Only update if still "submitted" (not already fulfilled/failed)
-                                if let Ok(Some(pr)) = db.get_proof_request(pr_id_lock) {
-                                    if pr.status == "submitted" {
-                                        let _ = db.update_proof_request_status(pr_id_lock, "locked");
-                                    }
-                                }
-                            }).await;
-                        });
-                    }
-
                     let result = submission.fulfillment_future.await;
                     match result {
                         Ok(proof_result) => {
@@ -797,7 +778,7 @@ async fn prove(
         StatusCode::OK,
         Json(ProveSubmittedResponse {
             proof_request_id,
-            status: "submitted".into(),
+            status: "pending".into(),
             message: "Proof request submitted. Poll /api/prove/status/{id} for updates.".into(),
         }),
     )
@@ -821,38 +802,6 @@ async fn proof_status(
     match db_result {
         Ok(Some(pr)) => {
             match pr.status.as_str() {
-                "submitted" => (
-                    StatusCode::OK,
-                    Json(ProofStatusResponse {
-                        status: "submitted".into(),
-                        message: Some("Proof request is queued...".into()),
-                        error: None,
-                        seal: None,
-                        journal: None,
-                        solver_address: None,
-                        solution_hash: None,
-                        delegation: None,
-                        prize_eth: None,
-                        puzzle_id: None,
-                    }),
-                )
-                    .into_response(),
-                "locked" => (
-                    StatusCode::OK,
-                    Json(ProofStatusResponse {
-                        status: "locked".into(),
-                        message: Some("A prover is generating your proof...".into()),
-                        error: None,
-                        seal: None,
-                        journal: None,
-                        solver_address: None,
-                        solution_hash: None,
-                        delegation: None,
-                        prize_eth: None,
-                        puzzle_id: None,
-                    }),
-                )
-                    .into_response(),
                 "fulfilled" => {
                     let result: serde_json::Value = pr
                         .result_json
@@ -908,6 +857,95 @@ async fn proof_status(
                     }),
                 )
                     .into_response(),
+                "pending" => {
+                    match &pr.boundless_request_id {
+                        None => (
+                            StatusCode::OK,
+                            Json(ProofStatusResponse {
+                                status: "pending".into(),
+                                message: Some("Submitting to prover network...".into()),
+                                error: None,
+                                seal: None,
+                                journal: None,
+                                solver_address: None,
+                                solution_hash: None,
+                                delegation: None,
+                                prize_eth: None,
+                                puzzle_id: None,
+                            }),
+                        )
+                            .into_response(),
+                        Some(boundless_id) => {
+                            let expires_at = pr.expires_at.map(|e| e as u64);
+                            match prover::query_boundless_status(
+                                &state.prover_config,
+                                boundless_id,
+                                expires_at,
+                            )
+                            .await
+                            {
+                                Ok(boundless_status) => {
+                                    let message = match boundless_status.as_str() {
+                                        "unknown" => Some("Proof request submitted, waiting for prover...".into()),
+                                        "locked" => Some("A prover is generating your proof...".into()),
+                                        "fulfilled" => Some("Proof fulfilled, finalizing...".into()),
+                                        "expired" => None,
+                                        _ => Some(format!("Status: {}", boundless_status)),
+                                    };
+
+                                    let error = if boundless_status == "expired" {
+                                        let pr_id = proof_request_id;
+                                        let state2 = Arc::clone(&state);
+                                        let _ = tokio::task::spawn_blocking(move || {
+                                            let db = state2.db.lock().expect("db mutex poisoned");
+                                            let _ = db.update_proof_request_error(pr_id, "Proof request expired on Boundless");
+                                        })
+                                        .await;
+                                        Some("Proof request expired".into())
+                                    } else {
+                                        None
+                                    };
+
+                                    (
+                                        StatusCode::OK,
+                                        Json(ProofStatusResponse {
+                                            status: boundless_status,
+                                            message,
+                                            error,
+                                            seal: None,
+                                            journal: None,
+                                            solver_address: None,
+                                            solution_hash: None,
+                                            delegation: None,
+                                            prize_eth: None,
+                                            puzzle_id: None,
+                                        }),
+                                    )
+                                        .into_response()
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to query Boundless status: {e}");
+                                    (
+                                        StatusCode::OK,
+                                        Json(ProofStatusResponse {
+                                            status: "pending".into(),
+                                            message: Some("Proof request in progress...".into()),
+                                            error: None,
+                                            seal: None,
+                                            journal: None,
+                                            solver_address: None,
+                                            solution_hash: None,
+                                            delegation: None,
+                                            prize_eth: None,
+                                            puzzle_id: None,
+                                        }),
+                                    )
+                                        .into_response()
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => (
                     StatusCode::OK,
                     Json(ProofStatusResponse {

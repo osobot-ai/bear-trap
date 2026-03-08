@@ -126,7 +126,7 @@ impl Db {
                     puzzle_id INTEGER NOT NULL,
                     solver_address TEXT NOT NULL,
                     boundless_request_id TEXT,
-                    status TEXT NOT NULL DEFAULT 'submitted',
+                    status TEXT NOT NULL DEFAULT 'pending',
                     result_json TEXT,
                     error_message TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -365,14 +365,6 @@ impl Db {
         }
     }
 
-    pub fn update_proof_request_status(&self, id: i64, status: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE proof_requests SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
-            params![status, id],
-        )?;
-        Ok(())
-    }
-
     pub fn update_proof_request_result(&self, id: i64, result_json: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE proof_requests SET status = 'fulfilled', result_json = ?1, updated_at = datetime('now') WHERE id = ?2",
@@ -389,7 +381,7 @@ impl Db {
         Ok(())
     }
 
-    /// Check if there's already an active (submitted/locked) proof request for this solver+puzzle.
+    /// Check if there's already an active (pending) proof request for this solver+puzzle.
     pub fn find_active_proof_request(
         &self,
         env: &str,
@@ -398,7 +390,7 @@ impl Db {
     ) -> Result<Option<ProofRequest>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
-             FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND solver_address = ?3 AND status IN ('submitted', 'locked')
+             FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND solver_address = ?3 AND status = 'pending'
              ORDER BY created_at DESC LIMIT 1",
         )?;
 

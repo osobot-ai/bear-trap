@@ -153,8 +153,10 @@ export function SubmitGuess() {
         );
         const statusData = (await statusResponse.json()) as ProofStatusResult;
 
-        if (statusData.status === "submitted") {
-          setProvingMessage("Proof request is queued...");
+        if (statusData.status === "pending") {
+          setProvingMessage(statusData.message || "Submitting to prover network...");
+        } else if (statusData.status === "unknown") {
+          setProvingMessage("Proof request submitted, waiting for prover...");
         } else if (statusData.status === "locked") {
           setProvingMessage("A prover is generating your proof...");
         } else if (statusData.status === "fulfilled") {
