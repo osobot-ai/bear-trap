@@ -537,4 +537,148 @@ mod tests {
         // Different environment starts at 0
         assert_eq!(db.next_puzzle_id("mainnet").unwrap(), 0);
     }
+
+    // ── Proof Request Tests ─────────────────────────────────
+
+    #[test]
+    fn test_create_proof_request_returns_autoincrement_id() {
+        let db = test_db();
+        let id1 = db.create_proof_request("mainnet", 0, "0xsolver1").unwrap();
+        let id2 = db.create_proof_request("mainnet", 0, "0xsolver2").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn test_get_proof_request() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 42, "0xsolver").unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.id, id);
+        assert_eq!(pr.environment, "mainnet");
+        assert_eq!(pr.puzzle_id, 42);
+        assert_eq!(pr.solver_address, "0xsolver");
+        assert_eq!(pr.status, "pending");
+        assert!(pr.boundless_request_id.is_none());
+        assert!(pr.result_json.is_none());
+        assert!(pr.error_message.is_none());
+    }
+
+    #[test]
+    fn test_get_proof_request_not_found() {
+        let db = test_db();
+        let pr = db.get_proof_request(999).unwrap();
+        assert!(pr.is_none());
+    }
+
+    #[test]
+    fn test_update_proof_request_boundless_id() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_boundless_id(id, "abc123def456", 1700000000).unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.boundless_request_id.as_deref(), Some("abc123def456"));
+        assert_eq!(pr.expires_at, Some(1700000000));
+        assert_eq!(pr.status, "pending"); // status unchanged
+    }
+
+    #[test]
+    fn test_update_proof_request_result_sets_fulfilled() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let result_json = r#"{"seal":"0x1234","journal":"0x5678"}"#;
+        db.update_proof_request_result(id, result_json).unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.status, "fulfilled");
+        assert_eq!(pr.result_json.as_deref(), Some(result_json));
+    }
+
+    #[test]
+    fn test_update_proof_request_error_sets_failed() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_error(id, "Wrong guess").unwrap();
+        let pr = db.get_proof_request(id).unwrap().unwrap();
+        assert_eq!(pr.status, "failed");
+        assert_eq!(pr.error_message.as_deref(), Some("Wrong guess"));
+    }
+
+    #[test]
+    fn test_find_active_proof_request_pending() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_some());
+        assert_eq!(active.unwrap().id, id);
+    }
+
+    #[test]
+    fn test_find_active_proof_request_none_after_fulfilled() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_result(id, r#"{"seal":"0x"}"#).unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_none_after_failed() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_error(id, "timeout").unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_environment_isolation() {
+        let db = test_db();
+        db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let active = db.find_active_proof_request("testnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_solver_isolation() {
+        let db = test_db();
+        db.create_proof_request("mainnet", 0, "0xsolver1").unwrap();
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver2").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_puzzle_isolation() {
+        let db = test_db();
+        db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        let active = db.find_active_proof_request("mainnet", 1, "0xsolver").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_duplicate_guard_allows_retry_after_failure() {
+        let db = test_db();
+        // First attempt fails
+        let id1 = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_error(id1, "network error").unwrap();
+
+        // Should allow new attempt since first is failed
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_none());
+
+        // New request succeeds
+        let id2 = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert_ne!(id1, id2);
+        let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert!(active.is_some());
+    }
+
+    #[test]
+    fn test_schema_migration_idempotent() {
+        let db = test_db();
+        // init() already called, calling again should be safe
+        db.init().unwrap();
+        // proof_requests table should still work
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        assert_eq!(id, 1);
+    }
 }

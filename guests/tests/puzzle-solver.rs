@@ -49,7 +49,7 @@ fn test_correct_guess() {
     let session = executor.execute(env, guests::PUZZLE_SOLVER_ELF).unwrap();
 
     // Decode the journal
-    let output = PuzzleOutput::abi_decode(&session.journal.bytes, true).unwrap();
+    let output = PuzzleOutput::abi_decode(&session.journal.bytes).unwrap();
 
     assert_eq!(output.solverAddress, solver);
     assert_eq!(output.solutionHash, expected_hash);
