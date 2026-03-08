@@ -391,6 +391,7 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
              FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND solver_address = ?3 AND status = 'pending'
+             AND created_at > datetime('now', '-30 minutes')
              ORDER BY created_at DESC LIMIT 1",
         )?;
 

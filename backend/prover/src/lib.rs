@@ -14,6 +14,7 @@ pub struct ProverConfig {
     pub rpc_url: String,
     pub private_key: String,
     pub pinata_jwt: Option<String>,
+    pub boundless_market_address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,12 +196,15 @@ fn load_guest_elf() -> Result<Vec<u8>> {
     )
 }
 
-pub type FulfillmentFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<ProofResult>> + Send>>;
-
 pub struct SubmitProofResult {
     pub boundless_request_id: String,
     pub expires_at: u64,
-    pub fulfillment_future: FulfillmentFuture,
+}
+
+/// Result of querying Boundless status — includes fulfillment data when fulfilled.
+pub struct BoundlessStatusResult {
+    pub status: String,
+    pub proof_result: Option<ProofResult>,
 }
 
 pub async fn submit_proof(
@@ -313,41 +317,22 @@ pub async fn submit_proof(
         expires_at
     );
 
-    let solver_address_owned = solver_address.to_string();
-    let expected_hash_owned = expected_hash.to_string();
-
-    let fulfillment_future: FulfillmentFuture = Box::pin(async move {
-        let fulfillment = client
-            .wait_for_request_fulfillment(request_id, Duration::from_secs(10), expires_at)
-            .await?;
-
-        tracing::info!("Proof request {:x} fulfilled!", request_id);
-
-        let fulfillment_data = fulfillment.data().map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
-        let seal = fulfillment.seal.to_vec();
-        let journal = fulfillment_data.journal().ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?.to_vec();
-
-        Ok(ProofResult {
-            seal,
-            journal,
-            solver_address: solver_address_owned,
-            solution_hash: expected_hash_owned,
-            puzzle_id,
-        })
-    });
-
     Ok(SubmitProofResult {
         boundless_request_id: format!("{:x}", request_id),
         expires_at,
-        fulfillment_future,
     })
 }
 
+/// Query Boundless for proof request status. When fulfilled, also fetches the
+/// fulfillment data (seal + journal) so the caller can write it to DB in one shot.
 pub async fn query_boundless_status(
     config: &ProverConfig,
     boundless_request_id: &str,
     expires_at: Option<u64>,
-) -> Result<String> {
+    solver_address: &str,
+    solution_hash: &str,
+    puzzle_id: u64,
+) -> Result<BoundlessStatusResult> {
     use alloy::primitives::{Address, U256};
     use alloy::providers::ProviderBuilder;
     use boundless_market::contracts::boundless_market::BoundlessMarketService;
@@ -356,7 +341,8 @@ pub async fn query_boundless_status(
     let rpc_url: url::Url = config.rpc_url.parse()?;
     let provider = ProviderBuilder::new().connect_http(rpc_url);
 
-    let market_address: Address = "0xfd152dadc5183870710fe54f939eae3ab9f0fe82".parse()?;
+    let market_address: Address = config.boundless_market_address.parse()
+        .map_err(|e| anyhow::anyhow!("Invalid boundless market address '{}': {e}", config.boundless_market_address))?;
     let caller: Address = Address::ZERO;
 
     let service = BoundlessMarketService::new(market_address, provider, caller);
@@ -368,14 +354,53 @@ pub async fn query_boundless_status(
     let status = service.get_status(request_id, expires_at).await
         .map_err(|e| anyhow::anyhow!("Failed to query Boundless status: {e}"))?;
 
-    let status_str = match status {
-        RequestStatus::Unknown => "unknown",
-        RequestStatus::Locked => "locked",
-        RequestStatus::Fulfilled => "fulfilled",
-        RequestStatus::Expired => "expired",
-    };
+    match status {
+        RequestStatus::Fulfilled => {
+            // Fetch fulfillment data — status is already fulfilled so this returns immediately
+            let expires = expires_at.unwrap_or(u64::MAX);
+            match service.wait_for_request_fulfillment(request_id, Duration::from_secs(1), expires).await {
+                Ok(fulfillment) => {
+                    let fulfillment_data = fulfillment.data()
+                        .map_err(|e| anyhow::anyhow!("Failed to parse fulfillment data: {e}"))?;
+                    let seal = fulfillment.seal.to_vec();
+                    let journal = fulfillment_data.journal()
+                        .ok_or_else(|| anyhow::anyhow!("Missing journal in fulfillment"))?
+                        .to_vec();
 
-    Ok(status_str.to_string())
+                    Ok(BoundlessStatusResult {
+                        status: "fulfilled".into(),
+                        proof_result: Some(ProofResult {
+                            seal,
+                            journal,
+                            solver_address: solver_address.to_string(),
+                            solution_hash: solution_hash.to_string(),
+                            puzzle_id,
+                        }),
+                    })
+                }
+                Err(e) => {
+                    tracing::error!("Boundless reports fulfilled but failed to fetch data: {e}");
+                    // Return fulfilled status but without data — caller should retry
+                    Ok(BoundlessStatusResult {
+                        status: "fulfilled".into(),
+                        proof_result: None,
+                    })
+                }
+            }
+        }
+        other => {
+            let status_str = match other {
+                RequestStatus::Unknown => "unknown",
+                RequestStatus::Locked => "locked",
+                RequestStatus::Expired => "expired",
+                _ => "unknown",
+            };
+            Ok(BoundlessStatusResult {
+                status: status_str.to_string(),
+                proof_result: None,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
