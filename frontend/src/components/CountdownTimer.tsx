@@ -1,12 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSoundEngine } from "@/components/SoundController";
 
 interface CountdownTimerProps {
   startsAt: string; // ISO 8601 timestamp
 }
 
 export function CountdownTimer({ startsAt }: CountdownTimerProps) {
+  const { playSfx, playVoice } = useSoundEngine();
+  const lastSecondRef = useRef(-1);
+  const hasPlayedZeroRef = useRef(false);
   const [timeLeft, setTimeLeft] = useState({
     days: 0,
     hours: 0,
@@ -29,6 +33,12 @@ export function CountdownTimer({ startsAt }: CountdownTimerProps) {
         setTimeLeft({ days, hours, minutes, seconds });
       } else {
         setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        // Play boom + voiceover when countdown hits zero
+        if (!hasPlayedZeroRef.current) {
+          hasPlayedZeroRef.current = true;
+          playSfx("countdown_zero");
+          setTimeout(() => playVoice("trapper-begin"), 500);
+        }
       }
     };
 
@@ -36,7 +46,16 @@ export function CountdownTimer({ startsAt }: CountdownTimerProps) {
     const timer = setInterval(calculateTimeLeft, 1000);
 
     return () => clearInterval(timer);
-  }, [startsAt]);
+  }, [startsAt, playSfx, playVoice]);
+
+  // Play tick sound in final 10 seconds
+  useEffect(() => {
+    const totalSeconds = timeLeft.days * 86400 + timeLeft.hours * 3600 + timeLeft.minutes * 60 + timeLeft.seconds;
+    if (totalSeconds > 0 && totalSeconds <= 10 && timeLeft.seconds !== lastSecondRef.current) {
+      lastSecondRef.current = timeLeft.seconds;
+      playSfx("countdown_tick");
+    }
+  }, [timeLeft, playSfx]);
 
   const formatDigits = (value: number) => value.toString().padStart(2, "0");
 

@@ -1,5 +1,6 @@
 import { WalletButton } from "@/components/WalletButton";
 import { ActivePuzzle } from "@/components/ActivePuzzle";
+import { SoundToggle } from "@/components/SoundController";
 import { ACTIVE_ENV } from "@/lib/contracts";
 
 const NETWORK_LABEL = ACTIVE_ENV === "mainnet" ? "Base Mainnet" : "Base Sepolia";
@@ -32,6 +33,7 @@ export default function Home() {
                 {NETWORK_LABEL}
               </span>
             </div>
+            <SoundToggle />
             <WalletButton />
           </div>
         </div>

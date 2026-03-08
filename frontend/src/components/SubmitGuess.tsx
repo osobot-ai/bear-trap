@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useSoundEngine } from "@/components/SoundController";
 import {
   useAccount,
   useReadContract,
@@ -75,6 +76,7 @@ interface ProofStatusResult {
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
+  const { playSfx, playVoice } = useSoundEngine();
   const [puzzleId, setPuzzleId] = useState("0");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
@@ -82,6 +84,27 @@ export function SubmitGuess() {
   const [proofData, setProofData] = useState<ProveResult | null>(null);
   const [provingMessage, setProvingMessage] = useState<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Sound effects on step changes
+  useEffect(() => {
+    switch (step) {
+      case "proving":
+        playSfx("ticket_burn");
+        break;
+      case "wrong":
+        playSfx("wrong_guess");
+        playVoice("trapper-wrong");
+        break;
+      case "proof-ready":
+        playSfx("proof_ready");
+        playVoice("trapper-proof-valid");
+        break;
+      case "success":
+        playSfx("prize_claimed");
+        setTimeout(() => playVoice("trapper-broken"), 300);
+        break;
+    }
+  }, [step, playSfx, playVoice]);
 
   // Read puzzle count for the selector
   const { data: puzzleCount } = useReadContract({
