@@ -329,20 +329,22 @@ impl Db {
         puzzle_id: i64,
         solver_address: &str,
     ) -> Result<i64> {
+        // Normalize address to lowercase for consistent lookup
+        let normalized = solver_address.to_lowercase();
         self.conn.execute(
             "INSERT INTO proof_requests (environment, puzzle_id, solver_address) VALUES (?1, ?2, ?3)",
-            params![env, puzzle_id, solver_address],
+            params![env, puzzle_id, normalized],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn get_proof_request(&self, id: i64) -> Result<Option<ProofRequest>> {
+    pub fn get_proof_request(&self, env: &str, id: i64) -> Result<Option<ProofRequest>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
-             FROM proof_requests WHERE id = ?1",
+             FROM proof_requests WHERE id = ?1 AND environment = ?2",
         )?;
 
-        let mut rows = stmt.query_map(params![id], |row| {
+        let mut rows = stmt.query_map(params![id, env], |row| {
             Ok(ProofRequest {
                 id: row.get(0)?,
                 environment: row.get(1)?,
@@ -381,6 +383,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn update_proof_request_expired(&self, id: i64, error_message: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE proof_requests SET status = 'expired', error_message = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![error_message, id],
+        )?;
+        Ok(())
+    }
+
     /// Check if there's already an active (pending) proof request for this solver+puzzle.
     pub fn find_active_proof_request(
         &self,
@@ -388,9 +398,10 @@ impl Db {
         puzzle_id: i64,
         solver_address: &str,
     ) -> Result<Option<ProofRequest>> {
+        // Use LOWER() for case-insensitive address comparison (Ethereum addresses are case-insensitive)
         let mut stmt = self.conn.prepare(
             "SELECT id, environment, puzzle_id, solver_address, boundless_request_id, status, result_json, error_message, created_at, updated_at, expires_at
-             FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND solver_address = ?3 AND status = 'pending'
+             FROM proof_requests WHERE environment = ?1 AND puzzle_id = ?2 AND LOWER(solver_address) = LOWER(?3) AND status = 'pending'
              AND created_at > datetime('now', '-30 minutes')
              ORDER BY created_at DESC LIMIT 1",
         )?;
@@ -554,7 +565,7 @@ mod tests {
     fn test_get_proof_request() {
         let db = test_db();
         let id = db.create_proof_request("mainnet", 42, "0xsolver").unwrap();
-        let pr = db.get_proof_request(id).unwrap().unwrap();
+        let pr = db.get_proof_request("mainnet", id).unwrap().unwrap();
         assert_eq!(pr.id, id);
         assert_eq!(pr.environment, "mainnet");
         assert_eq!(pr.puzzle_id, 42);
@@ -568,7 +579,7 @@ mod tests {
     #[test]
     fn test_get_proof_request_not_found() {
         let db = test_db();
-        let pr = db.get_proof_request(999).unwrap();
+        let pr = db.get_proof_request("mainnet", 999).unwrap();
         assert!(pr.is_none());
     }
 
@@ -577,7 +588,7 @@ mod tests {
         let db = test_db();
         let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
         db.update_proof_request_boundless_id(id, "abc123def456", 1700000000).unwrap();
-        let pr = db.get_proof_request(id).unwrap().unwrap();
+        let pr = db.get_proof_request("mainnet", id).unwrap().unwrap();
         assert_eq!(pr.boundless_request_id.as_deref(), Some("abc123def456"));
         assert_eq!(pr.expires_at, Some(1700000000));
         assert_eq!(pr.status, "pending"); // status unchanged
@@ -589,7 +600,7 @@ mod tests {
         let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
         let result_json = r#"{"seal":"0x1234","journal":"0x5678"}"#;
         db.update_proof_request_result(id, result_json).unwrap();
-        let pr = db.get_proof_request(id).unwrap().unwrap();
+        let pr = db.get_proof_request("mainnet", id).unwrap().unwrap();
         assert_eq!(pr.status, "fulfilled");
         assert_eq!(pr.result_json.as_deref(), Some(result_json));
     }
@@ -599,7 +610,7 @@ mod tests {
         let db = test_db();
         let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
         db.update_proof_request_error(id, "Wrong guess").unwrap();
-        let pr = db.get_proof_request(id).unwrap().unwrap();
+        let pr = db.get_proof_request("mainnet", id).unwrap().unwrap();
         assert_eq!(pr.status, "failed");
         assert_eq!(pr.error_message.as_deref(), Some("Wrong guess"));
     }
@@ -671,6 +682,49 @@ mod tests {
         assert_ne!(id1, id2);
         let active = db.find_active_proof_request("mainnet", 0, "0xsolver").unwrap();
         assert!(active.is_some());
+    }
+
+    #[test]
+    fn test_find_active_proof_request_case_insensitive() {
+        let db = test_db();
+        // Create with checksummed address
+        db.create_proof_request("mainnet", 0, "0xAbCdEf1234567890").unwrap();
+        // Should find it with lowercase
+        let active = db.find_active_proof_request("mainnet", 0, "0xabcdef1234567890").unwrap();
+        assert!(active.is_some());
+        // Should find it with uppercase
+        let active = db.find_active_proof_request("mainnet", 0, "0xABCDEF1234567890").unwrap();
+        assert!(active.is_some());
+    }
+
+    #[test]
+    fn test_create_proof_request_normalizes_address() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xAbCdEf").unwrap();
+        let pr = db.get_proof_request("mainnet", id).unwrap().unwrap();
+        assert_eq!(pr.solver_address, "0xabcdef");
+    }
+
+    #[test]
+    fn test_update_proof_request_expired() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        db.update_proof_request_expired(id, "Timed out on Boundless").unwrap();
+        let pr = db.get_proof_request("mainnet", id).unwrap().unwrap();
+        assert_eq!(pr.status, "expired");
+        assert_eq!(pr.error_message.as_deref(), Some("Timed out on Boundless"));
+    }
+
+    #[test]
+    fn test_get_proof_request_environment_scoped() {
+        let db = test_db();
+        let id = db.create_proof_request("mainnet", 0, "0xsolver").unwrap();
+        // Should find in correct env
+        let pr = db.get_proof_request("mainnet", id).unwrap();
+        assert!(pr.is_some());
+        // Should NOT find in wrong env
+        let pr = db.get_proof_request("testnet", id).unwrap();
+        assert!(pr.is_none());
     }
 
     #[test]

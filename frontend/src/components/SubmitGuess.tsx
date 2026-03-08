@@ -231,6 +231,13 @@ export function SubmitGuess() {
 
       const data = await response.json();
 
+      // 409 Conflict = proof request already in progress, resume polling
+      if (response.status === 409 && data.proofRequestId) {
+        setProvingMessage("Resuming existing proof request...");
+        startPolling(data.proofRequestId);
+        return;
+      }
+
       if (!response.ok) {
         const error = data.error || "Proof generation failed";
 

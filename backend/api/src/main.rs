@@ -735,11 +735,12 @@ async fn proof_status(
     State(state): State<Arc<AppState>>,
     Path(proof_request_id): Path<i64>,
 ) -> impl IntoResponse {
+    let env = state.environment.clone();
     let db_result = {
         let state = Arc::clone(&state);
         tokio::task::spawn_blocking(move || {
             let db = state.db.lock().expect("db mutex poisoned");
-            db.get_proof_request(proof_request_id)
+            db.get_proof_request(&env, proof_request_id)
         })
         .await
         .expect("spawn_blocking panicked")
@@ -822,13 +823,28 @@ async fn proof_status(
                         )
                             .into_response(),
                         Some(boundless_id) => {
+                            // Fetch solution_hash from puzzle for data integrity in ProofResult
+                            let env_for_hash = state.environment.clone();
+                            let pid_for_hash = pr.puzzle_id;
+                            let state_hash = Arc::clone(&state);
+                            let solution_hash = tokio::task::spawn_blocking(move || {
+                                let db = state_hash.db.lock().expect("db mutex poisoned");
+                                db.get_puzzle(&env_for_hash, pid_for_hash)
+                                    .ok()
+                                    .flatten()
+                                    .map(|p| p.solution_hash)
+                                    .unwrap_or_default()
+                            })
+                            .await
+                            .expect("spawn_blocking panicked");
+
                             let expires_at = pr.expires_at.map(|e| e as u64);
                             match prover::query_boundless_status(
                                 &state.prover_config,
                                 boundless_id,
                                 expires_at,
                                 &pr.solver_address,
-                                "", // solution_hash not needed for status, only for ProofResult
+                                &solution_hash,
                                 pr.puzzle_id as u64,
                             )
                             .await
@@ -921,7 +937,7 @@ async fn proof_status(
                                             let pr_id = proof_request_id;
                                             let _ = tokio::task::spawn_blocking(move || {
                                                 let db = state2.db.lock().expect("db mutex poisoned");
-                                                let _ = db.update_proof_request_error(pr_id, "Proof request expired on Boundless");
+                                                let _ = db.update_proof_request_expired(pr_id, "Proof request expired on Boundless");
                                             })
                                             .await;
 
