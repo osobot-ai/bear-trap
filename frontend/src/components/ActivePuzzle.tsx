@@ -43,7 +43,7 @@ function getTrapperMessage(status: string): string {
 }
 
 export function ActivePuzzle() {
-  const { playVoice, playSfx, playMusic } = useSoundEngine();
+  const { playVoice, playSfx, playMusic, stopMusic } = useSoundEngine();
   const { isDemo, demoState, demoConfig } = useDemo();
   const hasPlayedTeaserRef = useRef(false);
   const [data, setData] = useState<ActivePuzzleData | null>(null);
@@ -75,24 +75,47 @@ export function ActivePuzzle() {
     return () => clearInterval(interval);
   }, [isDemo]);
 
+  // Derive display status from either demo config or real data
+  const activeData = isDemo ? (demoConfig.puzzleData as ActivePuzzleData | null) : data;
+  const displayStatus = isDemo
+    ? (["countdown", "live", "completed"].includes(demoState) ? demoState as "countdown" | "live" | "completed" : demoConfig.puzzleData?.status)
+    : data?.status;
+
   // Play teaser voiceover on first countdown state render
-  const activeStatus = data?.status;
   useEffect(() => {
-    if (activeStatus === "countdown" && !hasPlayedTeaserRef.current) {
+    if (displayStatus === "countdown" && !hasPlayedTeaserRef.current) {
       hasPlayedTeaserRef.current = true;
-      // Delay slightly so user hears it after page loads
       const timer = setTimeout(() => playVoice("trapper-teaser"), 1500);
       return () => clearTimeout(timer);
     }
-  }, [activeStatus, playVoice]);
+  }, [displayStatus, playVoice]);
 
   // Start ambient drone + background music on live puzzle
   useEffect(() => {
-    if (activeStatus === "live") {
+    if (displayStatus === "live") {
       playSfx("trap_ambient");
       playMusic("ambient");
     }
-  }, [activeStatus, playSfx, playMusic]);
+    return () => {
+      if (displayStatus === "live") {
+        stopMusic();
+      }
+    };
+  }, [displayStatus, playSfx, playMusic, stopMusic]);
+
+  // Play victory music on completed state
+  useEffect(() => {
+    if (displayStatus === "completed") {
+      playMusic("victory");
+    }
+  }, [displayStatus, playMusic]);
+
+  // Play error voiceover
+  useEffect(() => {
+    if ((isDemo && demoState === "error") || (!isDemo && error)) {
+      playVoice("trapper-error");
+    }
+  }, [isDemo, demoState, error, playVoice]);
 
   const handleRetry = () => {
     setError(null);
@@ -133,7 +156,6 @@ export function ActivePuzzle() {
     );
   }
 
-  const activeData = isDemo ? (demoConfig.puzzleData as ActivePuzzleData) : data;
 
   if (!isDemo && isLoading) {
     return (
