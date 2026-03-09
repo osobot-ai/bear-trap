@@ -22,6 +22,7 @@ import type { Delegation as SdkDelegation } from "@metamask/smart-accounts-kit";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV } from "@/lib/contracts";
 import { TrapperError } from "./TrapperError";
+import { useDemo } from "@/lib/demo-context";
 
 const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
 
@@ -106,6 +107,7 @@ export function SubmitGuess() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { playSfx, playVoice, playMusic, stopMusic } = useSoundEngine();
+  const { isDemo, demoState, demoConfig, setDemoState } = useDemo();
   const [puzzleId, setPuzzleId] = useState("0");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
@@ -114,9 +116,15 @@ export function SubmitGuess() {
   const [provingMessage, setProvingMessage] = useState<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Sound effects on step changes
+  const demoStep = isDemo ? demoConfig.submitStep : step;
+  const demoProofData = isDemo ? (demoConfig.proofData as ProveResult | null) : proofData;
+  const demoAddress = isDemo ? demoConfig.wallet.address : address;
+  const demoConnected = isDemo ? demoConfig.wallet.isConnected : isConnected;
+  const demoTickets = isDemo ? demoConfig.tickets.balance : undefined;
+
+  const activeStep = isDemo ? demoConfig.submitStep : step;
   useEffect(() => {
-    switch (step) {
+    switch (activeStep) {
       case "proving":
         playSfx("ticket_burn");
         break;
@@ -129,13 +137,13 @@ export function SubmitGuess() {
         playVoice("trapper-proof-valid");
         break;
       case "success":
-        stopMusic(); // Stop ambient music
+        stopMusic();
         playSfx("prize_claimed");
         playMusic("victory");
         setTimeout(() => playVoice("trapper-broken"), 300);
         break;
     }
-  }, [step, playSfx, playVoice, playMusic, stopMusic]);
+  }, [activeStep, playSfx, playVoice, playMusic, stopMusic]);
 
   // Read puzzle count for the selector
   const { data: puzzleCount } = useReadContract({
@@ -192,7 +200,7 @@ export function SubmitGuess() {
   }, [isConfirmed, redeemHash]);
 
   useEffect(() => {
-    if (isConfirmed || step === "success") {
+    if (isConfirmed || step === "success" || (isDemo && demoState === "success")) {
       const end = Date.now() + 2000;
       const colors = ["#22c55e", "#FFD700", "#B7410E"];
       (function frame() {
@@ -201,10 +209,10 @@ export function SubmitGuess() {
         if (Date.now() < end) requestAnimationFrame(frame);
       })();
     }
-  }, [isConfirmed, step]);
+  }, [isConfirmed, step, isDemo, demoState]);
 
-  const count = puzzleCount ? Number(puzzleCount) : 0;
-  const tickets = ticketBalance ? Number(ticketBalance) : 0;
+  const count = isDemo ? 4 : (puzzleCount ? Number(puzzleCount) : 0);
+  const tickets = demoTickets ?? (ticketBalance ? Number(ticketBalance) : 0);
   const hasTickets = tickets > 0;
 
   const startPolling = useCallback((proofRequestId: number) => {
@@ -271,6 +279,16 @@ export function SubmitGuess() {
     poll();
     pollingRef.current = setInterval(poll, 10000);
   }, [refetchTicketBalance]);
+
+  const handleDemoSolve = useCallback(() => {
+    setDemoState("proving");
+    setTimeout(() => setDemoState("proof-ready"), 1500);
+  }, [setDemoState]);
+
+  const handleDemoClaim = useCallback(() => {
+    setDemoState("claiming");
+    setTimeout(() => setDemoState("success"), 1000);
+  }, [setDemoState]);
 
   const handleSolvePuzzle = useCallback(async () => {
     if (!passphrase.trim() || !address) return;
@@ -434,7 +452,10 @@ export function SubmitGuess() {
     markSolvedCalled.current = false;
   }, []);
 
-  // Determine display state
+  const displayStep = isDemo ? demoStep : step;
+  const displayConnected = isDemo ? demoConnected : isConnected;
+  const displayProofData = isDemo ? demoProofData : proofData;
+  const displayConfirmed = isDemo ? demoState === "success" : isConfirmed;
   const displayError =
     errorMessage || (redeemError ? redeemError.message : "");
 
@@ -467,7 +488,7 @@ export function SubmitGuess() {
 
       <div className="p-6 space-y-5">
         <AnimatePresence mode="wait">
-          {step === "idle" && (
+          {displayStep === "idle" && (
             <motion.div
               key="idle"
               initial={stepInitial}
@@ -483,7 +504,7 @@ export function SubmitGuess() {
                 <select
                   value={puzzleId}
                   onChange={(e) => setPuzzleId(e.target.value)}
-                  disabled={!isConnected || count === 0}
+                  disabled={!displayConnected || count === 0}
                   className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none"
                 >
                   {count === 0 ? (
@@ -506,7 +527,7 @@ export function SubmitGuess() {
                   type="text"
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
-                  disabled={!isConnected}
+                  disabled={!displayConnected}
                   className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   placeholder="Enter the secret passphrase..."
                 />
@@ -536,7 +557,7 @@ export function SubmitGuess() {
                 </div>
               </div>
 
-              {!isConnected ? (
+              {!displayConnected ? (
                 <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4 text-center">
                   <p className="text-xs text-trap-muted font-mono">
                     Connect your wallet to submit a guess
@@ -545,10 +566,10 @@ export function SubmitGuess() {
               ) : (
                 <button
                   disabled={
-                    !hasTickets || !passphrase.trim() || count === 0
+                    !isDemo && (!hasTickets || !passphrase.trim() || count === 0)
                   }
                   className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
-                  onClick={handleSolvePuzzle}
+                  onClick={isDemo ? handleDemoSolve : handleSolvePuzzle}
                 >
                   {!hasTickets
                     ? "No tickets -- buy tickets first"
@@ -558,7 +579,7 @@ export function SubmitGuess() {
                 </button>
               )}
 
-              {isConnected && (
+              {displayConnected && (
                 <p className="text-center text-xs font-mono text-trap-muted">
                   You have{" "}
                   <span className="text-trap-green font-medium">{tickets}</span>{" "}
@@ -568,7 +589,7 @@ export function SubmitGuess() {
             </motion.div>
           )}
 
-          {step === "proving" && (
+          {displayStep === "proving" && (
             <motion.div
               key="proving"
               initial={stepInitial}
@@ -600,7 +621,7 @@ export function SubmitGuess() {
             </motion.div>
           )}
 
-          {step === "proof-ready" && (
+          {displayStep === "proof-ready" && (
             <motion.div
               key="proof-ready"
               initial={stepInitial}
@@ -631,7 +652,7 @@ export function SubmitGuess() {
                 </p>
               </div>
               <button
-                onClick={handleRedeemPrize}
+                onClick={isDemo ? handleDemoClaim : handleRedeemPrize}
                 className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all"
               >
                 Claim Prize
@@ -639,7 +660,7 @@ export function SubmitGuess() {
             </motion.div>
           )}
 
-          {step === "confirming" && (
+          {displayStep === "confirming" && (
             <motion.div
               key="confirming"
               initial={stepInitial}
@@ -676,7 +697,7 @@ export function SubmitGuess() {
             </motion.div>
           )}
 
-          {(isConfirmed || step === "success") && (
+          {(displayConfirmed || displayStep === "success") && (
             <motion.div
               key="success"
               initial={stepInitial}
@@ -692,9 +713,9 @@ export function SubmitGuess() {
                 <p className="font-display text-lg text-trap-green">
                   Puzzle Solved! Prize Claimed!
                 </p>
-                {proofData?.prizeEth && (
+                {displayProofData?.prizeEth && (
                   <p className="font-display text-2xl text-trap-gold mt-2">
-                    <AnimatedCounter value={proofData.prizeEth} /> ETH
+                    <AnimatedCounter value={displayProofData.prizeEth} /> ETH
                   </p>
                 )}
                 <p className="text-xs text-trap-muted mt-1">
@@ -721,7 +742,7 @@ export function SubmitGuess() {
             </motion.div>
           )}
 
-          {step === "wrong" && (
+          {displayStep === "wrong" && (
             <motion.div
               key="wrong"
               initial={stepInitial}
@@ -757,10 +778,10 @@ export function SubmitGuess() {
             </motion.div>
           )}
 
-          {(step === "error" || displayError) &&
-            step !== "success" &&
-            step !== "wrong" &&
-            !isConfirmed && (
+          {(displayStep === "error" || displayError) &&
+            displayStep !== "success" &&
+            displayStep !== "wrong" &&
+            !displayConfirmed && (
               <motion.div
                 key="error"
                 initial={stepInitial}

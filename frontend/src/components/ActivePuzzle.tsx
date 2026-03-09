@@ -13,6 +13,7 @@ import { SubmitGuess } from "./SubmitGuess";
 import { BACKEND_URL } from "@/lib/contracts";
 import { ActivePuzzleSkeleton } from "./Skeleton";
 import { TrapperError } from "./TrapperError";
+import { useDemo } from "@/lib/demo-context";
 
 /**
  * Matches the backend `ActivePuzzleResponse` struct (flat shape).
@@ -43,12 +44,15 @@ function getTrapperMessage(status: string): string {
 
 export function ActivePuzzle() {
   const { playVoice, playSfx, playMusic } = useSoundEngine();
+  const { isDemo, demoState, demoConfig } = useDemo();
   const hasPlayedTeaserRef = useRef(false);
   const [data, setData] = useState<ActivePuzzleData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (isDemo) return;
+
     const fetchActivePuzzle = async () => {
       try {
         const response = await fetch(`${BACKEND_URL}/api/puzzle/active`);
@@ -65,13 +69,11 @@ export function ActivePuzzle() {
       }
     };
 
-    // Initial fetch
     fetchActivePuzzle();
 
-    // Refresh every 30 seconds
     const interval = setInterval(fetchActivePuzzle, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isDemo]);
 
   // Play teaser voiceover on first countdown state render
   const activeStatus = data?.status;
@@ -107,7 +109,7 @@ export function ActivePuzzle() {
       .finally(() => setIsLoading(false));
   };
 
-  if (isLoading) {
+  if (isDemo && demoState === "loading") {
     return (
       <section className="relative overflow-hidden">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
@@ -117,7 +119,33 @@ export function ActivePuzzle() {
     );
   }
 
-  if (error || !data) {
+  if (isDemo && demoState === "error") {
+    return (
+      <section className="relative overflow-hidden">
+        <div className="mx-auto max-w-2xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
+          <TrapperError
+            type="network"
+            message="Could not connect to the Bear Trap backend"
+            onRetry={() => {}}
+          />
+        </div>
+      </section>
+    );
+  }
+
+  const activeData = isDemo ? (demoConfig.puzzleData as ActivePuzzleData) : data;
+
+  if (!isDemo && isLoading) {
+    return (
+      <section className="relative overflow-hidden">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
+          <ActivePuzzleSkeleton />
+        </div>
+      </section>
+    );
+  }
+
+  if (!isDemo && (error || !activeData)) {
     return (
       <section className="relative overflow-hidden">
         <div className="mx-auto max-w-2xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
@@ -131,7 +159,9 @@ export function ActivePuzzle() {
     );
   }
 
-  const { status } = data;
+  if (!activeData) return null;
+
+  const { status } = activeData;
   const message = getTrapperMessage(status);
 
   return (
@@ -149,11 +179,11 @@ export function ActivePuzzle() {
                 <span className="text-gradient-green">Approaches...</span>
               </h2>
               
-              {data.startsAt && <CountdownTimer startsAt={data.startsAt} />}
+              {activeData.startsAt && <CountdownTimer startsAt={activeData.startsAt} />}
             </div>
 
             <div className="grid gap-8 lg:grid-cols-2">
-              <PrizeDisplay prizeEth={data.prizeEth} />
+              <PrizeDisplay prizeEth={activeData.prizeEth} />
               <TrapperMessage message={message} />
             </div>
           </div>
@@ -164,7 +194,7 @@ export function ActivePuzzle() {
           <div className="space-y-12">
             <div className="text-center space-y-4">
               <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl tracking-tight text-white leading-[1.1]">
-                Puzzle #{data.id}
+                Puzzle #{activeData.id}
                 <br />
                 <span className="text-gradient-green">The Trap Is Set</span>
               </h2>
@@ -175,15 +205,15 @@ export function ActivePuzzle() {
 
             <div className="grid gap-6 sm:gap-8 lg:grid-cols-3">
               <div className="lg:col-span-2 space-y-6 sm:space-y-8">
-                <ClueDisplay clueURI={data.clueURI} />
+                <ClueDisplay clueURI={activeData.clueURI} />
                 <IntentVisualizer 
-                  proofStatus="locked" 
-                  prizeStatus="locked" 
+                  proofStatus={isDemo ? demoConfig.intentProps.proofStatus : "locked"} 
+                  prizeStatus={isDemo ? demoConfig.intentProps.prizeStatus : "locked"} 
                 />
               </div>
 
               <div className="space-y-6 sm:space-y-8">
-                <PrizeDisplay prizeEth={data.prizeEth} />
+                <PrizeDisplay prizeEth={activeData.prizeEth} />
                 <BuyTickets />
                 <SubmitGuess />
               </div>
@@ -201,19 +231,19 @@ export function ActivePuzzle() {
                 <span className="text-trap-gold glow-gold">SPRUNG!</span>
               </h2>
               
-              {data.winner && (
+              {activeData.winner && (
                 <div className="glass-panel noise-overlay rounded-xl p-8 max-w-2xl mx-auto">
                   <div className="text-center space-y-4">
                     <div className="text-trap-gold text-4xl mb-4">👑</div>
                     <h3 className="font-display text-2xl text-trap-gold">
-                      Puzzle #{data.id} Solved
+                      Puzzle #{activeData.id} Solved
                     </h3>
                     <div className="space-y-2">
                       <p className="font-mono text-sm text-trap-muted uppercase tracking-wider">
                         Winner
                       </p>
                       <p className="font-mono text-lg text-trap-text break-all">
-                        {data.winner}
+                        {activeData.winner}
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -221,7 +251,7 @@ export function ActivePuzzle() {
                         Prize Claimed
                       </p>
                       <p className="font-display text-3xl text-trap-gold font-bold">
-                        {data.prizeEth ?? "0"} ETH
+                        {activeData.prizeEth ?? "0"} ETH
                       </p>
                     </div>
                   </div>

@@ -19,13 +19,16 @@ import {
   TICKET_PRICE_RAW,
 } from "@/lib/contracts";
 import { TrapperError } from "./TrapperError";
+import { useDemo } from "@/lib/demo-context";
 
 export function BuyTickets() {
   const { address, isConnected, chain } = useAccount();
+  const { isDemo, demoConfig } = useDemo();
   const [ticketAmount, setTicketAmount] = useState("1");
   const [step, setStep] = useState<"approve" | "buy">("approve");
   const [batchStatus, setBatchStatus] = useState<"idle" | "pending" | "confirming" | "success" | "error">("idle");
   const [txError, setTxError] = useState<string | null>(null);
+  const [demoBuySuccess, setDemoBuySuccess] = useState(false);
 
   // Detect EIP-5792 batch capabilities
   const { data: capabilities } = useCapabilities();
@@ -192,13 +195,28 @@ export function BuyTickets() {
 
   const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming || isBatchPending || batchStatus === "pending";
 
-  const formattedBalance = osoBalance
-    ? parseFloat(formatUnits(osoBalance, 18)).toLocaleString(undefined, {
-        maximumFractionDigits: 2,
-      })
-    : "0";
+  const displayConnected = isDemo ? demoConfig.wallet.isConnected : isConnected;
 
-  const formattedTickets = ticketBalance ? Number(ticketBalance).toString() : "0";
+  const formattedBalance = isDemo
+    ? Number(demoConfig.tickets.osoBalance).toLocaleString()
+    : osoBalance
+      ? parseFloat(formatUnits(osoBalance, 18)).toLocaleString(undefined, {
+          maximumFractionDigits: 2,
+        })
+      : "0";
+
+  const formattedTickets = isDemo
+    ? demoConfig.tickets.balance.toString()
+    : ticketBalance ? Number(ticketBalance).toString() : "0";
+
+  function handleDemoBuy() {
+    setDemoBuySuccess(false);
+    setBatchStatus("pending");
+    setTimeout(() => {
+      setBatchStatus("idle");
+      setDemoBuySuccess(true);
+    }, 1000);
+  }
 
   return (
     <section className="glass-panel noise-overlay rounded-xl overflow-hidden">
@@ -236,7 +254,7 @@ export function BuyTickets() {
               $OSO Balance
             </p>
             <p className="font-mono text-sm text-trap-text font-medium">
-              {isConnected ? formattedBalance : "--"}
+              {displayConnected ? formattedBalance : "--"}
             </p>
           </div>
           <div className="rounded-lg bg-trap-black/50 border border-trap-border/30 p-3">
@@ -244,7 +262,7 @@ export function BuyTickets() {
               Your Tickets
             </p>
             <p className="font-mono text-sm text-trap-green font-medium">
-              {isConnected ? formattedTickets : "--"}
+              {displayConnected ? formattedTickets : "--"}
             </p>
           </div>
         </div>
@@ -261,7 +279,7 @@ export function BuyTickets() {
               max="100"
               value={ticketAmount}
               onChange={(e) => setTicketAmount(e.target.value)}
-              disabled={!isConnected}
+              disabled={!displayConnected}
               className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               placeholder="1"
             />
@@ -279,15 +297,31 @@ export function BuyTickets() {
           )}
         </div>
 
-        {/* Action buttons */}
-        {!isConnected ? (
+        {!displayConnected ? (
           <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4 text-center">
             <p className="text-xs text-trap-muted font-mono">
               Connect your wallet to buy tickets
             </p>
           </div>
+        ) : isDemo ? (
+          <div className="space-y-3">
+            <button
+              onClick={handleDemoBuy}
+              disabled={batchStatus === "pending" || parsedAmount <= 0}
+              className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
+            >
+              {batchStatus === "pending"
+                ? "Confirming..."
+                : `Buy ${parsedAmount} Ticket${parsedAmount !== 1 ? "s" : ""}`}
+            </button>
+
+            {demoBuySuccess && (
+              <p className="text-xs font-mono text-trap-green text-center">
+                Tickets purchased successfully.
+              </p>
+            )}
+          </div>
         ) : supportsBatch ? (
-          /* Batched flow — single button, one wallet popup */
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs font-mono text-trap-muted">
               <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold bg-trap-gold/20 text-trap-gold border border-trap-gold/30">

@@ -1,6 +1,7 @@
 import { WalletButton } from "@/components/WalletButton";
 import { ActivePuzzle } from "@/components/ActivePuzzle";
 import { SoundToggle } from "@/components/SoundController";
+import { DemoControlPanel } from "@/components/DemoControlPanel";
 import { ACTIVE_ENV } from "@/lib/contracts";
 
 const NETWORK_LABEL = ACTIVE_ENV === "mainnet" ? "Base Mainnet" : "Base Sepolia";
@@ -39,10 +40,11 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main content - ActivePuzzle component */}
       <main>
         <ActivePuzzle />
       </main>
+
+      <DemoControlPanel />
 
       {/* Footer */}
       <footer className="border-t border-trap-border/30 mt-12">
