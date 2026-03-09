@@ -249,6 +249,7 @@ pub async fn submit_proof(
     let expected_hash_bytes: FixedBytes<32> = expected_hash.parse()?;
     let operator_addr: Address = operator_address.parse()?;
 
+    let sig_bytes_for_journal = sig_bytes.clone();
     let input = PuzzleInput {
         guess: guess.to_string(),
         solverAddress: solver_addr,
@@ -275,20 +276,52 @@ pub async fn submit_proof(
         .with_uploader_config(&storage_config)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to configure storage uploader: {e}"))?
+        .with_skip_preflight(true)
         .build()
         .await?;
 
     tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
     tracing::info!("Storage config: uploader={:?}, pinata_jwt_set={}", storage_config.storage_uploader, config.pinata_jwt.is_some());
 
-    // Let the SDK handle image_id, cycles, and journal via preflight execution.
-    // Previously we passed an empty journal and hardcoded image_id, which caused
-    // the Boundless predicate digest to mismatch the actual guest output — provers
-    // rejected every request because the journal digest didn't match.
+    // Compute the journal ourselves to avoid needing r0vm on the server.
+    //
+    // The guest program commits PuzzleOutput { solverAddress, solutionHash, puzzleId, operatorSig }
+    // as ABI-encoded bytes. We know these values because we construct the input, so we can
+    // deterministically produce the same journal output without executing the guest.
+    //
+    // This lets us skip preflight (which needs r0vm binary) while still providing the
+    // correct journal digest for the Boundless predicate.
+    sol! {
+        struct PuzzleOutput {
+            address solverAddress;
+            bytes32 solutionHash;
+            uint256 puzzleId;
+            bytes operatorSig;
+        }
+    }
+
+    let journal_output = PuzzleOutput {
+        solverAddress: solver_addr,
+        solutionHash: expected_hash_bytes,
+        puzzleId: U256::from(puzzle_id),
+        operatorSig: sig_bytes_for_journal.into(),
+    };
+    let journal_bytes = journal_output.abi_encode();
+    let journal = risc0_zkvm::Journal::new(journal_bytes);
+
+    // Compute image_id from the ELF binary (deterministic hash, no execution needed).
+    let image_id = risc0_zkvm::compute_image_id(&guest_elf)?;
+
+    tracing::info!("Computed image_id: {}", image_id);
+    tracing::info!("Computed journal length: {} bytes", journal.bytes.len());
+
     let request = client
         .new_request()
         .with_program(guest_elf)
-        .with_stdin(encoded_input);
+        .with_stdin(encoded_input)
+        .with_image_id(image_id)
+        .with_cycles(1 << 24)
+        .with_journal(journal);
 
     let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
         Ok(result) => {
