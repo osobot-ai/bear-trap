@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
+import { BearTrapSVG } from "./BearTrapSVG";
 import { useSoundEngine } from "@/components/SoundController";
 import {
   useAccount,
@@ -72,6 +75,29 @@ interface ProofStatusResult {
   prizeEth?: string | null;
   puzzleId?: number;
 }
+
+function AnimatedCounter({ value }: { value: string }) {
+  const [display, setDisplay] = useState(0);
+  const target = parseFloat(value);
+  useEffect(() => {
+    const duration = 1500;
+    const start = Date.now();
+    const animate = () => {
+      const elapsed = Date.now() - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(target * eased);
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    animate();
+  }, [target]);
+  return <span>{display.toFixed(4)}</span>;
+}
+
+const stepTransition = { duration: 0.3 };
+const stepInitial = { opacity: 0, y: 20 };
+const stepAnimate = { opacity: 1, y: 0 };
+const stepExit = { opacity: 0, y: -10 };
 
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
@@ -161,6 +187,18 @@ export function SubmitGuess() {
       console.warn("Failed to call mark-solved (prize was still claimed):", err);
     });
   }, [isConfirmed, redeemHash]);
+
+  useEffect(() => {
+    if (isConfirmed || step === "success") {
+      const end = Date.now() + 2000;
+      const colors = ["#22c55e", "#FFD700", "#B7410E"];
+      (function frame() {
+        confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 }, colors });
+        confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 }, colors });
+        if (Date.now() < end) requestAnimationFrame(frame);
+      })();
+    }
+  }, [isConfirmed, step]);
 
   const count = puzzleCount ? Number(puzzleCount) : 0;
   const tickets = ticketBalance ? Number(ticketBalance) : 0;
@@ -425,298 +463,326 @@ export function SubmitGuess() {
       </div>
 
       <div className="p-6 space-y-5">
-        {/* Step 1: Puzzle selector + passphrase (idle) */}
-        {step === "idle" && (
-          <>
-            {/* Puzzle selector */}
-            <div>
-              <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
-                Puzzle ID
-              </label>
-              <select
-                value={puzzleId}
-                onChange={(e) => setPuzzleId(e.target.value)}
-                disabled={!isConnected || count === 0}
-                className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none"
-              >
-                {count === 0 ? (
-                  <option value="">No puzzles available</option>
-                ) : (
-                  Array.from({ length: count }, (_, i) => (
-                    <option key={i} value={i}>
-                      Puzzle #{i}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-
-            {/* Passphrase input */}
-            <div>
-              <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
-                Secret Passphrase
-              </label>
-              <input
-                type="text"
-                value={passphrase}
-                onChange={(e) => setPassphrase(e.target.value)}
-                disabled={!isConnected}
-                className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                placeholder="Enter the secret passphrase..."
-              />
-            </div>
-
-            {/* Info callout */}
-            <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4">
-              <div className="flex gap-3">
-                <svg
-                  className="h-4 w-4 text-trap-muted shrink-0 mt-0.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+        <AnimatePresence mode="wait">
+          {step === "idle" && (
+            <motion.div
+              key="idle"
+              initial={stepInitial}
+              animate={stepAnimate}
+              exit={stepExit}
+              transition={stepTransition}
+              className="space-y-5"
+            >
+              <div>
+                <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
+                  Puzzle ID
+                </label>
+                <select
+                  value={puzzleId}
+                  onChange={(e) => setPuzzleId(e.target.value)}
+                  disabled={!isConnected || count === 0}
+                  className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none"
                 >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="16" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12.01" y2="8" />
-                </svg>
-                <div className="text-xs text-trap-muted leading-relaxed">
-                  <p>
-                    Enter the secret passphrase. A ZK proof will verify your
-                    answer. Each attempt costs one ticket.
-                  </p>
+                  {count === 0 ? (
+                    <option value="">No puzzles available</option>
+                  ) : (
+                    Array.from({ length: count }, (_, i) => (
+                      <option key={i} value={i}>
+                        Puzzle #{i}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-trap-muted mb-2 uppercase tracking-wider">
+                  Secret Passphrase
+                </label>
+                <input
+                  type="text"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  disabled={!isConnected}
+                  className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  placeholder="Enter the secret passphrase..."
+                />
+              </div>
+
+              <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4">
+                <div className="flex gap-3">
+                  <svg
+                    className="h-4 w-4 text-trap-muted shrink-0 mt-0.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  <div className="text-xs text-trap-muted leading-relaxed">
+                    <p>
+                      Enter the secret passphrase. A ZK proof will verify your
+                      answer. Each attempt costs one ticket.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Solve button */}
-            {!isConnected ? (
-              <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4 text-center">
-                <p className="text-xs text-trap-muted font-mono">
-                  Connect your wallet to submit a guess
+              {!isConnected ? (
+                <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4 text-center">
+                  <p className="text-xs text-trap-muted font-mono">
+                    Connect your wallet to submit a guess
+                  </p>
+                </div>
+              ) : (
+                <button
+                  disabled={
+                    !hasTickets || !passphrase.trim() || count === 0
+                  }
+                  className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
+                  onClick={handleSolvePuzzle}
+                >
+                  {!hasTickets
+                    ? "No tickets -- buy tickets first"
+                    : count === 0
+                    ? "No puzzles available"
+                    : "Solve Puzzle"}
+                </button>
+              )}
+
+              {isConnected && (
+                <p className="text-center text-xs font-mono text-trap-muted">
+                  You have{" "}
+                  <span className="text-trap-green font-medium">{tickets}</span>{" "}
+                  ticket{tickets !== 1 ? "s" : ""} remaining
                 </p>
-              </div>
-            ) : (
-              <button
-                disabled={
-                  !hasTickets || !passphrase.trim() || count === 0
-                }
-                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
-                onClick={handleSolvePuzzle}
-              >
-                {!hasTickets
-                  ? "No tickets -- buy tickets first"
-                  : count === 0
-                  ? "No puzzles available"
-                  : "Solve Puzzle"}
-              </button>
-            )}
-          </>
-        )}
+              )}
+            </motion.div>
+          )}
 
-        {/* Step 2: Burning ticket & generating proof */}
-        {step === "proving" && (
-          <div className="py-8 text-center space-y-4">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
-              <svg
-                className="h-5 w-5 text-trap-green animate-spin"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-mono text-sm text-trap-text">
-                {provingMessage || "Burning ticket & generating proof..."}
-              </p>
-              <p className="text-xs text-trap-muted mt-1">
-                Your ticket has been consumed. Generating zero-knowledge proof...
-                This may take several minutes.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Proof generated — submit to claim prize */}
-        {step === "proof-ready" && (
-          <div className="py-8 text-center space-y-4">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20">
-              <svg
-                className="h-6 w-6 text-trap-green"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-display text-lg text-trap-green">
-                Proof Generated!
-              </p>
-              <p className="text-xs text-trap-muted mt-1">
-                Submit the transaction to claim your prize.
-              </p>
-            </div>
-            <button
-              onClick={handleRedeemPrize}
-              className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all"
+          {step === "proving" && (
+            <motion.div
+              key="proving"
+              initial={stepInitial}
+              animate={stepAnimate}
+              exit={stepExit}
+              transition={stepTransition}
+              className="py-8 text-center space-y-4"
             >
-              Claim Prize
-            </button>
-          </div>
-        )}
-
-        {/* Step 4: Confirming transaction */}
-        {step === "confirming" && (
-          <div className="py-8 text-center space-y-4">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
-              <svg
-                className="h-5 w-5 text-trap-green animate-spin"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-mono text-sm text-trap-text">
-                {isRedeeming
-                  ? "Waiting for wallet confirmation..."
-                  : isConfirming
-                  ? "Confirming transaction..."
-                  : "Submitting proof on-chain..."}
-              </p>
-              <p className="text-xs text-trap-muted mt-1">
-                {isConfirming && redeemHash
-                  ? `Tx: ${redeemHash.slice(0, 10)}...${redeemHash.slice(-8)}`
-                  : "Please confirm in your wallet"}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Step 5: Success */}
-        {(isConfirmed || step === "success") && (
-          <div className="py-8 text-center space-y-4">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20">
-              <svg
-                className="h-6 w-6 text-trap-green"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-display text-lg text-trap-green">
-                Puzzle Solved! Prize Claimed!
-              </p>
-              <p className="text-xs text-trap-muted mt-1">
-                Congratulations! The delegation has been redeemed and the ETH
-                prize is yours.
-              </p>
-            </div>
-            {redeemHash && (
-              <a
-                href={`${EXPLORER_URL}/tx/${redeemHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block text-xs font-mono text-trap-green hover:text-trap-green-dim transition-colors underline decoration-trap-green/30 underline-offset-2"
-              >
-                View on Basescan
-              </a>
-            )}
-            <button
-              onClick={handleReset}
-              className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
-            >
-              Solve Another Puzzle
-            </button>
-          </div>
-        )}
-
-        {/* Step 6: Wrong guess */}
-        {step === "wrong" && (
-          <div className="space-y-4">
-            <div className="py-8 text-center space-y-4">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-red/10 border border-trap-red/20">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
                 <svg
-                  className="h-6 w-6 text-trap-red"
+                  className="h-5 w-5 text-trap-green animate-spin"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
                 >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
               </div>
               <div>
-                <p className="font-display text-lg text-trap-red">
-                  Wrong Guess
+                <p className="font-mono text-sm text-trap-text">
+                  {provingMessage || "Burning ticket & generating proof..."}
                 </p>
                 <p className="text-xs text-trap-muted mt-1">
-                  {errorMessage || "Your ticket was consumed. Try again with a different passphrase."}
+                  Your ticket has been consumed. Generating zero-knowledge proof...
+                  This may take several minutes.
                 </p>
               </div>
-            </div>
-            <button
-              onClick={handleReset}
-              className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
-            >
-              Try Again
-            </button>
-          </div>
-        )}
+            </motion.div>
+          )}
 
-        {/* Step 7: Generic error */}
-        {(step === "error" || displayError) &&
-          step !== "success" &&
-          step !== "wrong" &&
-          !isConfirmed && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-trap-red/20 bg-trap-red/5 p-4">
-                <p className="text-xs font-mono text-trap-red mb-1 uppercase tracking-wider">
-                  Error
+          {step === "proof-ready" && (
+            <motion.div
+              key="proof-ready"
+              initial={stepInitial}
+              animate={stepAnimate}
+              exit={stepExit}
+              transition={stepTransition}
+              className="py-8 text-center space-y-4"
+            >
+              <motion.div
+                animate={{
+                  boxShadow: [
+                    "0 0 20px rgba(255,215,0,0.2)",
+                    "0 0 40px rgba(255,215,0,0.4)",
+                    "0 0 20px rgba(255,215,0,0.2)",
+                  ],
+                }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className="inline-flex rounded-full mx-auto"
+              >
+                <BearTrapSVG state="closed" size={64} />
+              </motion.div>
+              <div>
+                <p className="font-display text-lg text-trap-green">
+                  Proof Generated!
                 </p>
-                <p className="text-xs text-trap-muted break-all">
-                  {displayError || "An unknown error occurred"}
+                <p className="text-xs text-trap-muted mt-1">
+                  Submit the transaction to claim your prize.
                 </p>
               </div>
+              <button
+                onClick={handleRedeemPrize}
+                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all"
+              >
+                Claim Prize
+              </button>
+            </motion.div>
+          )}
+
+          {step === "confirming" && (
+            <motion.div
+              key="confirming"
+              initial={stepInitial}
+              animate={stepAnimate}
+              exit={stepExit}
+              transition={stepTransition}
+              className="py-8 text-center space-y-4"
+            >
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-trap-green/10 border border-trap-green/20 animate-pulse-slow">
+                <svg
+                  className="h-5 w-5 text-trap-green animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-mono text-sm text-trap-text">
+                  {isRedeeming
+                    ? "Waiting for wallet confirmation..."
+                    : isConfirming
+                    ? "Confirming transaction..."
+                    : "Submitting proof on-chain..."}
+                </p>
+                <p className="text-xs text-trap-muted mt-1">
+                  {isConfirming && redeemHash
+                    ? `Tx: ${redeemHash.slice(0, 10)}...${redeemHash.slice(-8)}`
+                    : "Please confirm in your wallet"}
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+          {(isConfirmed || step === "success") && (
+            <motion.div
+              key="success"
+              initial={stepInitial}
+              animate={stepAnimate}
+              exit={stepExit}
+              transition={stepTransition}
+              className="py-8 text-center space-y-4"
+            >
+              <div className="mx-auto">
+                <BearTrapSVG state="opening" size={64} />
+              </div>
+              <div>
+                <p className="font-display text-lg text-trap-green">
+                  Puzzle Solved! Prize Claimed!
+                </p>
+                {proofData?.prizeEth && (
+                  <p className="font-display text-2xl text-trap-gold mt-2">
+                    <AnimatedCounter value={proofData.prizeEth} /> ETH
+                  </p>
+                )}
+                <p className="text-xs text-trap-muted mt-1">
+                  Congratulations! The delegation has been redeemed and the ETH
+                  prize is yours.
+                </p>
+              </div>
+              {redeemHash && (
+                <a
+                  href={`${EXPLORER_URL}/tx/${redeemHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-xs font-mono text-trap-green hover:text-trap-green-dim transition-colors underline decoration-trap-green/30 underline-offset-2"
+                >
+                  View on Basescan
+                </a>
+              )}
+              <button
+                onClick={handleReset}
+                className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
+              >
+                Solve Another Puzzle
+              </button>
+            </motion.div>
+          )}
+
+          {step === "wrong" && (
+            <motion.div
+              key="wrong"
+              initial={stepInitial}
+              animate={{ ...stepAnimate, x: [0, -8, 8, -6, 6, -3, 3, 0] }}
+              exit={stepExit}
+              transition={stepTransition}
+              className="space-y-4"
+            >
+              <motion.div
+                animate={{ x: [0, -8, 8, -6, 6, -3, 3, 0] }}
+                transition={{ duration: 0.5 }}
+              >
+                <div className="py-8 text-center space-y-4">
+                  <div className="mx-auto">
+                    <BearTrapSVG state="snapping" size={64} />
+                  </div>
+                  <div>
+                    <p className="font-display text-lg text-trap-red">
+                      Wrong Guess
+                    </p>
+                    <p className="text-xs text-trap-muted mt-1">
+                      {errorMessage || "Your ticket was consumed. Try again with a different passphrase."}
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
               <button
                 onClick={handleReset}
                 className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
               >
                 Try Again
               </button>
-            </div>
+            </motion.div>
           )}
 
-        {/* Ticket count */}
-        {isConnected && step === "idle" && (
-          <p className="text-center text-xs font-mono text-trap-muted">
-            You have{" "}
-            <span className="text-trap-green font-medium">{tickets}</span>{" "}
-            ticket{tickets !== 1 ? "s" : ""} remaining
-          </p>
-        )}
+          {(step === "error" || displayError) &&
+            step !== "success" &&
+            step !== "wrong" &&
+            !isConfirmed && (
+              <motion.div
+                key="error"
+                initial={stepInitial}
+                animate={stepAnimate}
+                exit={stepExit}
+                transition={stepTransition}
+                className="space-y-4"
+              >
+                <div className="rounded-lg border border-trap-red/20 bg-trap-red/5 p-4">
+                  <p className="text-xs font-mono text-trap-red mb-1 uppercase tracking-wider">
+                    Error
+                  </p>
+                  <p className="text-xs text-trap-muted break-all">
+                    {displayError || "An unknown error occurred"}
+                  </p>
+                </div>
+                <button
+                  onClick={handleReset}
+                  className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
+                >
+                  Try Again
+                </button>
+              </motion.div>
+            )}
+        </AnimatePresence>
       </div>
     </section>
   );
