@@ -52,6 +52,9 @@ const config: Config = {
         "chain-break": "chainBreak 0.6s ease-out forwards",
         shimmer: "shimmer 2s linear infinite",
         "ember-glow": "ember-glow 2s ease-in-out infinite",
+        "glow-gold": "glow-gold-pulse 2s ease-in-out infinite",
+        "glow-red": "glow-red-pulse 2s ease-in-out infinite",
+        "border-glow": "border-glow-pulse 3s ease-in-out infinite",
       },
       keyframes: {
         fadeIn: {
@@ -88,6 +91,36 @@ const config: Config = {
           "50%": {
             boxShadow:
               "0 0 16px rgba(183,65,14,0.4), 0 0 40px rgba(183,65,14,0.1)",
+          },
+        },
+        "glow-gold-pulse": {
+          "0%, 100%": {
+            textShadow:
+              "0 0 20px rgba(255,215,0,0.3), 0 0 60px rgba(255,215,0,0.1)",
+          },
+          "50%": {
+            textShadow:
+              "0 0 30px rgba(255,215,0,0.5), 0 0 80px rgba(255,215,0,0.2)",
+          },
+        },
+        "glow-red-pulse": {
+          "0%, 100%": {
+            textShadow:
+              "0 0 20px rgba(239,68,68,0.3), 0 0 60px rgba(239,68,68,0.1)",
+          },
+          "50%": {
+            textShadow:
+              "0 0 30px rgba(239,68,68,0.5), 0 0 80px rgba(239,68,68,0.2)",
+          },
+        },
+        "border-glow-pulse": {
+          "0%, 100%": {
+            borderColor: "rgba(183,65,14,0.3)",
+            boxShadow: "0 0 10px rgba(183,65,14,0.1)",
+          },
+          "50%": {
+            borderColor: "rgba(183,65,14,0.6)",
+            boxShadow: "0 0 20px rgba(183,65,14,0.2)",
           },
         },
       },
