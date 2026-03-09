@@ -12,7 +12,7 @@ import {
   useSendTransaction,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { encodeAbiParameters, parseEther, type Hex } from "viem";
+import { encodeAbiParameters, parseEther, pad, type Hex } from "viem";
 import {
   createExecution,
   ExecutionMode,
@@ -20,7 +20,7 @@ import {
 } from "@metamask/smart-accounts-kit";
 import type { Delegation as SdkDelegation } from "@metamask/smart-accounts-kit";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
-import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV } from "@/lib/contracts";
+import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV, ZKP_ENFORCER_ADDRESS } from "@/lib/contracts";
 import { TrapperError } from "./TrapperError";
 import { useDemo } from "@/lib/demo-context";
 
@@ -399,18 +399,27 @@ export function SubmitGuess() {
       [seal, journal]
     );
 
+    // Ensure salt is always a properly padded bytes32 hex string.
+    // An odd-length hex like "0x1" causes RPC "Invalid params" errors.
+    const rawSalt = delegation.salt.startsWith("0x")
+      ? delegation.salt as Hex
+      : ("0x" + BigInt(delegation.salt).toString(16).padStart(64, "0")) as Hex;
+    const paddedSalt = pad(rawSalt, { size: 32 });
+
     const signedDelegation: SdkDelegation = {
       delegate: delegation.delegate as Hex,
       delegator: delegation.delegator as Hex,
       authority: delegation.authority as Hex,
-      caveats: delegation.caveats.map((c: DelegationCaveat, index: number) => ({
+      caveats: delegation.caveats.map((c: DelegationCaveat) => ({
         enforcer: c.enforcer as Hex,
         terms: (c.terms || "0x") as Hex,
-        // Only the ZKPEnforcer caveat (first) gets seal+journal as args
-        // Other caveats (NativeTokenTransferAmount, ExactCalldata) use empty args
-        args: index === 0 ? caveatArgs : ("0x" as Hex),
+        // Only the ZKPEnforcer caveat gets seal+journal as args.
+        // Match by enforcer address instead of assuming index position.
+        args: c.enforcer.toLowerCase() === ZKP_ENFORCER_ADDRESS.toLowerCase()
+          ? caveatArgs
+          : ("0x" as Hex),
       })),
-      salt: (delegation.salt.startsWith("0x") ? delegation.salt : ("0x" + BigInt(delegation.salt).toString(16))) as Hex,
+      salt: paddedSalt,
       signature: delegation.signature as Hex,
     };
 
