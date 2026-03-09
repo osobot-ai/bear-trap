@@ -83,14 +83,16 @@ function AnimatedCounter({ value }: { value: string }) {
   useEffect(() => {
     const duration = 1500;
     const start = Date.now();
+    let rafId: number;
     const animate = () => {
       const elapsed = Date.now() - start;
       const progress = Math.min(elapsed / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(target * eased);
-      if (progress < 1) requestAnimationFrame(animate);
+      if (progress < 1) rafId = requestAnimationFrame(animate);
     };
-    animate();
+    rafId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafId);
   }, [target]);
   return <span>{display.toFixed(4)}</span>;
 }
@@ -133,7 +135,7 @@ export function SubmitGuess() {
         setTimeout(() => playVoice("trapper-broken"), 300);
         break;
     }
-  }, [step, playSfx, playVoice]);
+  }, [step, playSfx, playVoice, playMusic, stopMusic]);
 
   // Read puzzle count for the selector
   const { data: puzzleCount } = useReadContract({
