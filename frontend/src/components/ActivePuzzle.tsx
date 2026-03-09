@@ -103,12 +103,14 @@ export function ActivePuzzle() {
     };
   }, [displayStatus, playSfx, playMusic, stopMusic]);
 
-  // Play victory music on completed state
+  // Play victory music + trapper voice on completed state
   useEffect(() => {
     if (displayStatus === "completed") {
       playMusic("victory");
+      const timer = setTimeout(() => playVoice("trapper-broken"), 1000);
+      return () => clearTimeout(timer);
     }
-  }, [displayStatus, playMusic]);
+  }, [displayStatus, playMusic, playVoice]);
 
   // Play error voiceover
   useEffect(() => {
