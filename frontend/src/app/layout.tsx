@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
+import { SoundProvider } from "@/components/SoundController";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,7 +22,9 @@ export default function RootLayout({
       <body className="min-h-screen bg-trap-black text-trap-text antialiased">
         <div className="fixed inset-0 bg-grid-pattern bg-grid opacity-[0.03] pointer-events-none" />
         <div className="relative z-10">
-          <Providers>{children}</Providers>
+          <Providers>
+            <SoundProvider>{children}</SoundProvider>
+          </Providers>
         </div>
       </body>
     </html>

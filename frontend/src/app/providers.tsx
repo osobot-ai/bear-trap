@@ -5,7 +5,8 @@ import { Web3AuthProvider } from "@web3auth/modal/react";
 import { WagmiProvider } from "@web3auth/modal/react/wagmi";
 import { web3AuthContextConfig } from "@/lib/web3authConfig";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useState, useEffect, type ReactNode } from "react";
+import { DemoProvider } from "@/lib/demo-context";
+import { Suspense, useState, useEffect, type ReactNode } from "react";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -40,7 +41,11 @@ export function Providers({ children }: { children: ReactNode }) {
     <Web3AuthProvider config={web3AuthContextConfig}>
       <QueryClientProvider client={queryClient}>
         <WagmiProvider>
-          <ErrorBoundary>{children}</ErrorBoundary>
+          <ErrorBoundary>
+            <Suspense>
+              <DemoProvider>{children}</DemoProvider>
+            </Suspense>
+          </ErrorBoundary>
         </WagmiProvider>
       </QueryClientProvider>
     </Web3AuthProvider>

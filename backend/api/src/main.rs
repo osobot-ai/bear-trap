@@ -89,6 +89,21 @@ struct PuzzleResponse {
     prize_eth: Option<String>,
     solved: bool,
     winner: Option<String>,
+    starts_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivePuzzleResponse {
+    id: i64,
+    #[serde(rename = "clueURI")]
+    clue_uri: String,
+    prize_eth: Option<String>,
+    solved: bool,
+    winner: Option<String>,
+    starts_at: Option<String>,
+    status: String,
+    delegation: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -162,6 +177,7 @@ async fn list_puzzles(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     prize_eth: p.prize_eth,
                     solved: p.solved,
                     winner: p.winner,
+                    starts_at: p.starts_at,
                 })
                 .collect();
             (StatusCode::OK, Json(serde_json::to_value(response).unwrap())).into_response()
@@ -205,6 +221,7 @@ async fn get_puzzle(
                 prize_eth: p.prize_eth,
                 solved: p.solved,
                 winner: p.winner,
+                starts_at: p.starts_at,
             }),
         )
             .into_response(),
@@ -222,6 +239,84 @@ async fn get_puzzle(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: "Failed to read puzzle".into(),
+                    ticket_burned: None,
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_active_puzzle(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let env = state.environment.clone();
+    let db_result = {
+        let state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            let db = state.db.lock().expect("db mutex poisoned");
+            let puzzle = db.get_active_puzzle(&env).map_err(|e| e.to_string())?;
+            let delegation = if let Some(ref p) = puzzle {
+                db.get_active_delegation(&env, p.id).map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+            Ok::<_, String>((puzzle, delegation))
+        })
+        .await
+        .expect("spawn_blocking panicked")
+    };
+
+    match db_result {
+        Ok((Some(puzzle), delegation)) => {
+            let status = if puzzle.solved {
+                "completed".to_string()
+            } else if let Some(ref starts_at) = puzzle.starts_at {
+                match chrono::DateTime::parse_from_rfc3339(starts_at) {
+                    Ok(start_time) => {
+                        if start_time.with_timezone(&chrono::Utc) > chrono::Utc::now() {
+                            "countdown".to_string()
+                        } else {
+                            "live".to_string()
+                        }
+                    }
+                    Err(_) => "live".to_string(),
+                }
+            } else {
+                "live".to_string()
+            };
+
+            let delegation_value = delegation.as_ref().and_then(|d| {
+                serde_json::from_str::<serde_json::Value>(&d.delegation_json).ok()
+            });
+
+            (
+                StatusCode::OK,
+                Json(ActivePuzzleResponse {
+                    id: puzzle.id,
+                    clue_uri: puzzle.clue_uri,
+                    prize_eth: puzzle.prize_eth,
+                    solved: puzzle.solved,
+                    winner: puzzle.winner,
+                    starts_at: puzzle.starts_at,
+                    status,
+                    delegation: delegation_value,
+                }),
+            )
+                .into_response()
+        }
+        Ok((None, _)) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "No puzzles found".into(),
+                ticket_burned: None,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get active puzzle: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to read active puzzle".into(),
                     ticket_burned: None,
                 }),
             )
@@ -1427,6 +1522,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build router
     let app = Router::new()
+        .route("/api/puzzle/active", get(get_active_puzzle))
         .route("/api/puzzles", get(list_puzzles))
         .route("/api/puzzles/{id}", get(get_puzzle))
         .route("/api/prove", post(prove))

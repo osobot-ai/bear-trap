@@ -47,6 +47,9 @@ enum Commands {
         /// IPFS URI for the puzzle clue (optional).
         #[arg(long, default_value = "")]
         clue_uri: String,
+
+        #[arg(long)]
+        starts_at: Option<String>,
     },
 
     /// Add a signed delegation for a puzzle. Deactivates any existing active delegation.
@@ -234,7 +237,7 @@ async fn main() {
             println!("Database initialized at {path}");
         }
 
-        Commands::CreatePuzzle { answer, clue_uri } => {
+        Commands::CreatePuzzle { answer, clue_uri, starts_at } => {
             let db = get_db();
             db.init().expect("Failed to initialize database");
 
@@ -271,10 +274,16 @@ async fn main() {
                 .next_puzzle_id(environment)
                 .expect("Failed to query next puzzle ID");
             let id = db
-                .create_puzzle(environment, next_id, &solution_hash, &clue_uri)
+                .create_puzzle(environment, next_id, &solution_hash, &clue_uri, starts_at.as_deref())
                 .expect("Failed to create puzzle");
 
-            println!("Created puzzle #{id} ({environment}) (hash: {solution_hash})");
+            if let Some(ref sa) = starts_at {
+                println!(
+                    "Created puzzle #{id} ({environment}) (hash: {solution_hash}) (starts at: {sa})"
+                );
+            } else {
+                println!("Created puzzle #{id} ({environment}) (hash: {solution_hash})");
+            }
         }
 
         Commands::AddDelegation {

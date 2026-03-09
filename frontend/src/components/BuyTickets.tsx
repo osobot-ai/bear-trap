@@ -1,8 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { formatUnits, parseUnits } from "viem";
+import {
+  useAccount,
+  useReadContract,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
+import { useCapabilities, useSendCalls } from "wagmi/experimental";
+import { formatUnits, encodeFunctionData } from "viem";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { erc20Abi } from "@/lib/abi/erc20";
 import {
@@ -12,11 +18,29 @@ import {
   TICKET_PRICE_DISPLAY,
   TICKET_PRICE_RAW,
 } from "@/lib/contracts";
+import { TrapperError } from "./TrapperError";
+import { useDemo } from "@/lib/demo-context";
 
 export function BuyTickets() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chain } = useAccount();
+  const { isDemo, demoConfig } = useDemo();
   const [ticketAmount, setTicketAmount] = useState("1");
   const [step, setStep] = useState<"approve" | "buy">("approve");
+  const [batchStatus, setBatchStatus] = useState<"idle" | "pending" | "confirming" | "success" | "error">("idle");
+  const [txError, setTxError] = useState<string | null>(null);
+  const [demoBuySuccess, setDemoBuySuccess] = useState(false);
+
+  // Detect EIP-5792 batch capabilities
+  const { data: capabilities } = useCapabilities();
+  const currentChainId = chain?.id;
+  const chainIdHex = currentChainId ? (`0x${currentChainId.toString(16)}` as `0x${string}`) : undefined;
+  const atomicStatus = chainIdHex
+    ? (capabilities as Record<string, Record<string, { status?: string }>> | undefined)?.[chainIdHex]?.atomic?.status
+    : undefined;
+  const supportsBatch = atomicStatus === "supported" || atomicStatus === "ready";
+
+  // Batched sendCalls hook
+  const { sendCalls, isPending: isBatchPending } = useSendCalls();
 
   // Read $OSO balance
   const { data: osoBalance } = useReadContract({
@@ -48,21 +72,21 @@ export function BuyTickets() {
     query: { enabled: !!address },
   });
 
-  // Write: Approve
   const {
     data: approveHash,
     writeContract: approve,
     isPending: isApproving,
+    error: approveError,
   } = useWriteContract();
 
   const { isLoading: isApproveConfirming, isSuccess: isApproveConfirmed } =
     useWaitForTransactionReceipt({ hash: approveHash });
 
-  // Write: Buy tickets
   const {
     data: buyHash,
     writeContract: buy,
     isPending: isBuying,
+    error: buyError,
   } = useWriteContract();
 
   const { isLoading: isBuyConfirming, isSuccess: isBuyConfirmed } =
@@ -73,7 +97,11 @@ export function BuyTickets() {
   const hasEnoughBalance = osoBalance ? osoBalance >= totalCost : false;
   const hasEnoughAllowance = currentAllowance ? currentAllowance >= totalCost : false;
 
-  // Determine step based on allowance
+  useEffect(() => {
+    if (approveError) setTxError(approveError.message);
+    if (buyError) setTxError(buyError.message);
+  }, [approveError, buyError]);
+
   useEffect(() => {
     if (hasEnoughAllowance) {
       setStep("buy");
@@ -99,6 +127,7 @@ export function BuyTickets() {
 
   function handleApprove() {
     if (!parsedAmount || parsedAmount <= 0) return;
+    setTxError(null);
     approve({
       address: OSO_TOKEN_ADDRESS,
       abi: erc20Abi,
@@ -110,6 +139,7 @@ export function BuyTickets() {
 
   function handleBuy() {
     if (!parsedAmount || parsedAmount <= 0) return;
+    setTxError(null);
     buy({
       address: BEAR_TRAP_ADDRESS,
       abi: bearTrapAbi,
@@ -119,15 +149,74 @@ export function BuyTickets() {
     });
   }
 
-  const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming;
+  function handleBatchBuy() {
+    if (!parsedAmount || parsedAmount <= 0) return;
+    setTxError(null);
+    setBatchStatus("pending");
 
-  const formattedBalance = osoBalance
-    ? parseFloat(formatUnits(osoBalance, 18)).toLocaleString(undefined, {
-        maximumFractionDigits: 2,
-      })
-    : "0";
+    const approveData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [BEAR_TRAP_ADDRESS, totalCost],
+    });
 
-  const formattedTickets = ticketBalance ? Number(ticketBalance).toString() : "0";
+    const buyData = encodeFunctionData({
+      abi: bearTrapAbi,
+      functionName: "buyTickets",
+      args: [BigInt(parsedAmount)],
+    });
+
+    sendCalls(
+      {
+        calls: [
+          {
+            to: OSO_TOKEN_ADDRESS,
+            data: approveData,
+          },
+          {
+            to: BEAR_TRAP_ADDRESS,
+            data: buyData,
+          },
+        ],
+      },
+      {
+        onSuccess: () => {
+          setBatchStatus("success");
+          refetchTickets();
+          refetchAllowance();
+        },
+        onError: (err) => {
+          setBatchStatus("error");
+          setTxError(err instanceof Error ? err.message : "Transaction failed");
+        },
+      },
+    );
+  }
+
+  const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming || isBatchPending || batchStatus === "pending";
+
+  const displayConnected = isDemo ? demoConfig.wallet.isConnected : isConnected;
+
+  const formattedBalance = isDemo
+    ? Number(demoConfig.tickets.osoBalance).toLocaleString()
+    : osoBalance
+      ? parseFloat(formatUnits(osoBalance, 18)).toLocaleString(undefined, {
+          maximumFractionDigits: 2,
+        })
+      : "0";
+
+  const formattedTickets = isDemo
+    ? demoConfig.tickets.balance.toString()
+    : ticketBalance ? Number(ticketBalance).toString() : "0";
+
+  function handleDemoBuy() {
+    setDemoBuySuccess(false);
+    setBatchStatus("pending");
+    setTimeout(() => {
+      setBatchStatus("idle");
+      setDemoBuySuccess(true);
+    }, 1000);
+  }
 
   return (
     <section className="glass-panel noise-overlay rounded-xl overflow-hidden">
@@ -165,7 +254,7 @@ export function BuyTickets() {
               $OSO Balance
             </p>
             <p className="font-mono text-sm text-trap-text font-medium">
-              {isConnected ? formattedBalance : "--"}
+              {displayConnected ? formattedBalance : "--"}
             </p>
           </div>
           <div className="rounded-lg bg-trap-black/50 border border-trap-border/30 p-3">
@@ -173,7 +262,7 @@ export function BuyTickets() {
               Your Tickets
             </p>
             <p className="font-mono text-sm text-trap-green font-medium">
-              {isConnected ? formattedTickets : "--"}
+              {displayConnected ? formattedTickets : "--"}
             </p>
           </div>
         </div>
@@ -190,8 +279,8 @@ export function BuyTickets() {
               max="100"
               value={ticketAmount}
               onChange={(e) => setTicketAmount(e.target.value)}
-              disabled={!isConnected}
-              className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!displayConnected}
+              className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               placeholder="1"
             />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono text-trap-muted">
@@ -208,14 +297,69 @@ export function BuyTickets() {
           )}
         </div>
 
-        {/* Action buttons */}
-        {!isConnected ? (
+        {!displayConnected ? (
           <div className="rounded-lg border border-trap-border/30 bg-trap-black/30 p-4 text-center">
             <p className="text-xs text-trap-muted font-mono">
               Connect your wallet to buy tickets
             </p>
           </div>
+        ) : isDemo ? (
+          <div className="space-y-3">
+            <button
+              onClick={handleDemoBuy}
+              disabled={batchStatus === "pending" || parsedAmount <= 0}
+              className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
+            >
+              {batchStatus === "pending"
+                ? "Confirming..."
+                : `Buy ${parsedAmount} Ticket${parsedAmount !== 1 ? "s" : ""}`}
+            </button>
+
+            {demoBuySuccess && (
+              <p className="text-xs font-mono text-trap-green text-center">
+                Tickets purchased successfully.
+              </p>
+            )}
+          </div>
+        ) : supportsBatch ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs font-mono text-trap-muted">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold bg-trap-gold/20 text-trap-gold border border-trap-gold/30">
+                ⚡
+              </span>
+              <span className="text-trap-gold">One-click buy (batched)</span>
+            </div>
+
+            <button
+              onClick={handleBatchBuy}
+              disabled={isProcessing || parsedAmount <= 0 || !hasEnoughBalance}
+              className="w-full rounded-lg bg-trap-gold/10 border border-trap-gold/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-gold hover:bg-trap-gold/20 hover:border-trap-gold/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-gold/10"
+            >
+              {isBatchPending || batchStatus === "pending"
+                ? "Confirming..."
+                : !hasEnoughBalance
+                ? "Insufficient $OSO"
+                : `Buy ${parsedAmount} Ticket${parsedAmount !== 1 ? "s" : ""}`}
+            </button>
+
+            {batchStatus === "success" && (
+              <p className="text-xs font-mono text-trap-green text-center">
+                Tickets purchased successfully.
+              </p>
+            )}
+            {batchStatus === "error" && (
+              <TrapperError
+                type="transaction"
+                message={txError || undefined}
+                onRetry={() => {
+                  setBatchStatus("idle");
+                  setTxError(null);
+                }}
+              />
+            )}
+          </div>
         ) : (
+          /* Fallback 2-step flow */
           <div className="space-y-3">
             {/* Step indicator */}
             <div className="flex items-center gap-2 text-xs font-mono text-trap-muted">
@@ -250,7 +394,7 @@ export function BuyTickets() {
               <button
                 onClick={handleApprove}
                 disabled={isProcessing || parsedAmount <= 0 || !hasEnoughBalance}
-                className="w-full rounded-lg bg-trap-amber/10 border border-trap-amber/30 px-4 py-3 font-mono text-sm font-medium text-trap-amber hover:bg-trap-amber/20 hover:border-trap-amber/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-amber/10"
+                className="w-full rounded-lg bg-trap-amber/10 border border-trap-amber/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-amber hover:bg-trap-amber/20 hover:border-trap-amber/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-amber/10"
               >
                 {isApproving
                   ? "Approving..."
@@ -264,7 +408,7 @@ export function BuyTickets() {
               <button
                 onClick={handleBuy}
                 disabled={isProcessing || parsedAmount <= 0}
-                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
+                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
               >
                 {isBuying
                   ? "Buying..."
@@ -278,6 +422,14 @@ export function BuyTickets() {
               <p className="text-xs font-mono text-trap-green text-center">
                 Tickets purchased successfully.
               </p>
+            )}
+
+            {txError && !isBuyConfirmed && batchStatus !== "error" && (
+              <TrapperError
+                type="transaction"
+                message={txError}
+                onRetry={() => setTxError(null)}
+              />
             )}
           </div>
         )}

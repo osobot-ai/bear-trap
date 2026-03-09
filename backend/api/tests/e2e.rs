@@ -23,7 +23,7 @@ fn e2e_puzzle_lifecycle() {
 
     // Create puzzle (0-indexed to match on-chain)
     let puzzle_id = db
-        .create_puzzle("testnet", 0, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", "ipfs://clue1")
+        .create_puzzle("testnet", 0, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", "ipfs://clue1", None)
         .unwrap();
     assert_eq!(puzzle_id, 0);
 
@@ -50,7 +50,7 @@ fn e2e_delegation_lifecycle() {
     db.init().unwrap();
 
     let puzzle_id = db
-        .create_puzzle("testnet", 0, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", "ipfs://clue")
+        .create_puzzle("testnet", 0, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", "ipfs://clue", None)
         .unwrap();
 
     // Add delegation
@@ -86,12 +86,12 @@ fn e2e_environment_isolation() {
 
     // Create puzzle in testnet
     let testnet_id = db
-        .create_puzzle("testnet", 0, "aaaa", "ipfs://testnet")
+        .create_puzzle("testnet", 0, "aaaa", "ipfs://testnet", None)
         .unwrap();
 
     // Create puzzle in mainnet (globally unique ID)
     let mainnet_id = db
-        .create_puzzle("mainnet", 1, "bbbb", "ipfs://mainnet")
+        .create_puzzle("mainnet", 1, "bbbb", "ipfs://mainnet", None)
         .unwrap();
 
     // Each env only sees its own puzzles
@@ -181,7 +181,7 @@ async fn e2e_full_testnet_flow() {
     let solution_hash = format!("{}", hex::encode(hasher.finalize()));
 
     let puzzle_id = db
-        .create_puzzle("testnet", 0, &solution_hash, "ipfs://puzzle-clue")
+        .create_puzzle("testnet", 0, &solution_hash, "ipfs://puzzle-clue", None)
         .unwrap();
 
     // 2. Add a delegation for the puzzle
@@ -245,8 +245,8 @@ async fn e2e_multiple_puzzles_independent() {
         hex::encode(h.finalize())
     };
 
-    let id1 = db.create_puzzle("testnet", 0, &hash1, "ipfs://puzzle1").unwrap();
-    let id2 = db.create_puzzle("testnet", 1, &hash2, "ipfs://puzzle2").unwrap();
+    let id1 = db.create_puzzle("testnet", 0, &hash1, "ipfs://puzzle1", None).unwrap();
+    let id2 = db.create_puzzle("testnet", 1, &hash2, "ipfs://puzzle2", None).unwrap();
 
     // Add delegations
     db.add_delegation("testnet", id1, r#"{"chain":84532}"#, "0.5").unwrap();

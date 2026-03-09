@@ -14,6 +14,7 @@ pub struct Puzzle {
     pub clue_uri: String,
     pub solved: bool,
     pub winner: Option<String>,
+    pub starts_at: Option<String>,
     /// Prize from active delegation (joined at query time).
     pub prize_eth: Option<String>,
     pub created_at: String,
@@ -45,7 +46,7 @@ pub struct ProofRequest {
     pub expires_at: Option<i64>,
 }
 
-const _CURRENT_SCHEMA_VERSION: i32 = 2;
+const _CURRENT_SCHEMA_VERSION: i32 = 3;
 
 impl Db {
     /// Open (or create) a SQLite database at the given path.
@@ -138,6 +139,12 @@ impl Db {
             self.set_schema_version(2)?;
         }
 
+        if current < 3 {
+            self.conn
+                .execute_batch("ALTER TABLE puzzles ADD COLUMN starts_at TEXT;")?;
+            self.set_schema_version(3)?;
+        }
+
         Ok(())
     }
 
@@ -148,10 +155,17 @@ impl Db {
     // ── Puzzles ──────────────────────────────────────────────
 
     /// Insert a new puzzle with an explicit ID (must match the on-chain puzzleId).
-    pub fn create_puzzle(&self, env: &str, id: i64, solution_hash: &str, clue_uri: &str) -> Result<i64> {
+    pub fn create_puzzle(
+        &self,
+        env: &str,
+        id: i64,
+        solution_hash: &str,
+        clue_uri: &str,
+        starts_at: Option<&str>,
+    ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO puzzles (id, environment, solution_hash, clue_uri) VALUES (?1, ?2, ?3, ?4)",
-            params![id, env, solution_hash, clue_uri],
+            "INSERT INTO puzzles (id, environment, solution_hash, clue_uri, starts_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, env, solution_hash, clue_uri, starts_at],
         )?;
         Ok(id)
     }
@@ -169,7 +183,7 @@ impl Db {
     /// Fetch a single puzzle by ID, scoped to environment, with prize from active delegation.
     pub fn get_puzzle(&self, env: &str, id: i64) -> Result<Option<Puzzle>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.id, p.environment, p.solution_hash, p.clue_uri, p.solved, p.winner, d.prize_eth, p.created_at
+            "SELECT p.id, p.environment, p.solution_hash, p.clue_uri, p.solved, p.winner, p.starts_at, d.prize_eth, p.created_at
              FROM puzzles p
              LEFT JOIN delegations d ON d.puzzle_id = p.id AND d.active = 1 AND d.environment = p.environment
              WHERE p.id = ?1 AND p.environment = ?2",
@@ -183,8 +197,9 @@ impl Db {
                 clue_uri: row.get(3)?,
                 solved: row.get::<_, i32>(4)? != 0,
                 winner: row.get(5)?,
-                prize_eth: row.get(6)?,
-                created_at: row.get(7)?,
+                starts_at: row.get(6)?,
+                prize_eth: row.get(7)?,
+                created_at: row.get(8)?,
             })
         })?;
 
@@ -198,7 +213,7 @@ impl Db {
     /// List all puzzles with their active delegation prize, scoped to environment.
     pub fn list_puzzles(&self, env: &str) -> Result<Vec<Puzzle>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.id, p.environment, p.solution_hash, p.clue_uri, p.solved, p.winner, d.prize_eth, p.created_at
+            "SELECT p.id, p.environment, p.solution_hash, p.clue_uri, p.solved, p.winner, p.starts_at, d.prize_eth, p.created_at
              FROM puzzles p
              LEFT JOIN delegations d ON d.puzzle_id = p.id AND d.active = 1 AND d.environment = p.environment
              WHERE p.environment = ?1
@@ -214,13 +229,72 @@ impl Db {
                     clue_uri: row.get(3)?,
                     solved: row.get::<_, i32>(4)? != 0,
                     winner: row.get(5)?,
-                    prize_eth: row.get(6)?,
-                    created_at: row.get(7)?,
+                    starts_at: row.get(6)?,
+                    prize_eth: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
 
         Ok(puzzles)
+    }
+
+    pub fn get_active_puzzle(&self, env: &str) -> Result<Option<Puzzle>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.environment, p.solution_hash, p.clue_uri, p.solved, p.winner, p.starts_at, d.prize_eth, p.created_at
+             FROM puzzles p
+             LEFT JOIN delegations d ON d.puzzle_id = p.id AND d.active = 1 AND d.environment = p.environment
+             WHERE p.environment = ?1 AND p.solved = 0
+             ORDER BY p.id DESC
+             LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query_map(params![env], |row| {
+            Ok(Puzzle {
+                id: row.get(0)?,
+                environment: row.get(1)?,
+                solution_hash: row.get(2)?,
+                clue_uri: row.get(3)?,
+                solved: row.get::<_, i32>(4)? != 0,
+                winner: row.get(5)?,
+                starts_at: row.get(6)?,
+                prize_eth: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        })?;
+
+        if let Some(Ok(puzzle)) = rows.next() {
+            return Ok(Some(puzzle));
+        }
+
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.environment, p.solution_hash, p.clue_uri, p.solved, p.winner, p.starts_at, d.prize_eth, p.created_at
+             FROM puzzles p
+             LEFT JOIN delegations d ON d.puzzle_id = p.id AND d.active = 1 AND d.environment = p.environment
+             WHERE p.environment = ?1 AND p.solved = 1
+             ORDER BY p.updated_at DESC
+             LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query_map(params![env], |row| {
+            Ok(Puzzle {
+                id: row.get(0)?,
+                environment: row.get(1)?,
+                solution_hash: row.get(2)?,
+                clue_uri: row.get(3)?,
+                solved: row.get::<_, i32>(4)? != 0,
+                winner: row.get(5)?,
+                starts_at: row.get(6)?,
+                prize_eth: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(Ok(puzzle)) => Ok(Some(puzzle)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
     }
 
     /// Mark a puzzle as solved with the winner's address, scoped to environment.
@@ -456,7 +530,7 @@ mod tests {
     #[test]
     fn test_create_and_get_puzzle() {
         let db = test_db();
-        let id = db.create_puzzle("testnet", 0, "0xabcdef", "ipfs://clue").unwrap();
+        let id = db.create_puzzle("testnet", 0, "0xabcdef", "ipfs://clue", None).unwrap();
         assert_eq!(id, 0);
         let puzzle = db.get_puzzle("testnet", id).unwrap().unwrap();
         assert_eq!(puzzle.solution_hash, "0xabcdef");
@@ -470,8 +544,8 @@ mod tests {
     #[test]
     fn test_list_puzzles() {
         let db = test_db();
-        db.create_puzzle("testnet", 0, "0x111", "ipfs://1").unwrap();
-        db.create_puzzle("testnet", 1, "0x222", "ipfs://2").unwrap();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1", None).unwrap();
+        db.create_puzzle("testnet", 1, "0x222", "ipfs://2", None).unwrap();
         let puzzles = db.list_puzzles("testnet").unwrap();
         assert_eq!(puzzles.len(), 2);
     }
@@ -479,8 +553,8 @@ mod tests {
     #[test]
     fn test_environment_isolation() {
         let db = test_db();
-        db.create_puzzle("testnet", 0, "0x111", "ipfs://1").unwrap();
-        db.create_puzzle("mainnet", 1, "0x222", "ipfs://2").unwrap();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1", None).unwrap();
+        db.create_puzzle("mainnet", 1, "0x222", "ipfs://2", None).unwrap();
 
         let testnet_puzzles = db.list_puzzles("testnet").unwrap();
         assert_eq!(testnet_puzzles.len(), 1);
@@ -494,7 +568,7 @@ mod tests {
     #[test]
     fn test_mark_solved() {
         let db = test_db();
-        let id = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
+        let id = db.create_puzzle("testnet", 0, "0xaaa", "", None).unwrap();
         db.mark_solved("testnet", id, "0xwinner").unwrap();
         let puzzle = db.get_puzzle("testnet", id).unwrap().unwrap();
         assert!(puzzle.solved);
@@ -504,7 +578,7 @@ mod tests {
     #[test]
     fn test_delegation_lifecycle() {
         let db = test_db();
-        let pid = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
+        let pid = db.create_puzzle("testnet", 0, "0xaaa", "", None).unwrap();
 
         // Add first delegation
         db.add_delegation("testnet", pid, r#"{"v":1}"#, "1.0").unwrap();
@@ -526,7 +600,7 @@ mod tests {
     #[test]
     fn test_delegation_environment_isolation() {
         let db = test_db();
-        let pid = db.create_puzzle("testnet", 0, "0xaaa", "").unwrap();
+        let pid = db.create_puzzle("testnet", 0, "0xaaa", "", None).unwrap();
 
         db.add_delegation("testnet", pid, r#"{"v":1}"#, "1.0").unwrap();
 
@@ -540,14 +614,121 @@ mod tests {
         let db = test_db();
         assert_eq!(db.next_puzzle_id("testnet").unwrap(), 0);
 
-        db.create_puzzle("testnet", 0, "0x111", "").unwrap();
+        db.create_puzzle("testnet", 0, "0x111", "", None).unwrap();
         assert_eq!(db.next_puzzle_id("testnet").unwrap(), 1);
 
-        db.create_puzzle("testnet", 1, "0x222", "").unwrap();
+        db.create_puzzle("testnet", 1, "0x222", "", None).unwrap();
         assert_eq!(db.next_puzzle_id("testnet").unwrap(), 2);
 
         // Different environment starts at 0
         assert_eq!(db.next_puzzle_id("mainnet").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_create_puzzle_with_starts_at() {
+        let db = test_db();
+        let id = db
+            .create_puzzle(
+                "testnet",
+                0,
+                "0xabcdef",
+                "ipfs://clue",
+                Some("2026-03-15T18:00:00Z"),
+            )
+            .unwrap();
+        let puzzle = db.get_puzzle("testnet", id).unwrap().unwrap();
+        assert_eq!(puzzle.starts_at.as_deref(), Some("2026-03-15T18:00:00Z"));
+    }
+
+    #[test]
+    fn test_create_puzzle_without_starts_at() {
+        let db = test_db();
+        let id = db
+            .create_puzzle("testnet", 0, "0xabcdef", "ipfs://clue", None)
+            .unwrap();
+        let puzzle = db.get_puzzle("testnet", id).unwrap().unwrap();
+        assert!(puzzle.starts_at.is_none());
+    }
+
+    #[test]
+    fn test_get_active_puzzle_unsolved() {
+        let db = test_db();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1", None)
+            .unwrap();
+        let active = db.get_active_puzzle("testnet").unwrap().unwrap();
+        assert_eq!(active.id, 0);
+        assert!(!active.solved);
+    }
+
+    #[test]
+    fn test_get_active_puzzle_returns_unsolved_over_solved() {
+        let db = test_db();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1", None)
+            .unwrap();
+        db.create_puzzle("testnet", 1, "0x222", "ipfs://2", None)
+            .unwrap();
+        db.mark_solved("testnet", 0, "0xwinner").unwrap();
+
+        let active = db.get_active_puzzle("testnet").unwrap().unwrap();
+        assert_eq!(active.id, 1);
+        assert!(!active.solved);
+    }
+
+    #[test]
+    fn test_get_active_puzzle_falls_back_to_solved() {
+        let db = test_db();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1", None)
+            .unwrap();
+        db.mark_solved("testnet", 0, "0xwinner").unwrap();
+
+        let active = db.get_active_puzzle("testnet").unwrap().unwrap();
+        assert_eq!(active.id, 0);
+        assert!(active.solved);
+        assert_eq!(active.winner.as_deref(), Some("0xwinner"));
+    }
+
+    #[test]
+    fn test_get_active_puzzle_none() {
+        let db = test_db();
+        let active = db.get_active_puzzle("testnet").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_get_active_puzzle_environment_scoped() {
+        let db = test_db();
+        db.create_puzzle("testnet", 0, "0x111", "ipfs://1", None)
+            .unwrap();
+        let active = db.get_active_puzzle("mainnet").unwrap();
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn test_get_active_puzzle_with_starts_at() {
+        let db = test_db();
+        db.create_puzzle(
+            "testnet",
+            0,
+            "0x111",
+            "ipfs://1",
+            Some("2099-12-31T23:59:59Z"),
+        )
+        .unwrap();
+        let active = db.get_active_puzzle("testnet").unwrap().unwrap();
+        assert_eq!(active.starts_at.as_deref(), Some("2099-12-31T23:59:59Z"));
+    }
+
+    #[test]
+    fn test_schema_migration_v3_adds_starts_at() {
+        let db = test_db();
+        db.create_puzzle("testnet", 0, "0x111", "", Some("2026-01-01T00:00:00Z"))
+            .unwrap();
+        let p = db.get_puzzle("testnet", 0).unwrap().unwrap();
+        assert_eq!(p.starts_at.as_deref(), Some("2026-01-01T00:00:00Z"));
+
+        db.create_puzzle("testnet", 1, "0x222", "", None).unwrap();
+        let p2 = db.get_puzzle("testnet", 1).unwrap().unwrap();
+        assert!(p2.starts_at.is_none());
     }
 
     // ── Proof Request Tests ─────────────────────────────────

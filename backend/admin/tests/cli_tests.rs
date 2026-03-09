@@ -37,7 +37,7 @@ fn test_create_puzzle_and_list() {
     let env = "testnet";
     let hash = sha256_hex("test answer");
 
-    let id = db.create_puzzle(env, 0, &hash, "ipfs://clue").unwrap();
+    let id = db.create_puzzle(env, 0, &hash, "ipfs://clue", None).unwrap();
     assert_eq!(id, 0);
 
     let puzzles = db.list_puzzles(env).unwrap();
@@ -53,9 +53,9 @@ fn test_create_multiple_puzzles_sequential_ids() {
     let db = test_db();
     let env = "testnet";
 
-    let id0 = db.create_puzzle(env, 0, &sha256_hex("a"), "").unwrap();
-    let id1 = db.create_puzzle(env, 1, &sha256_hex("b"), "").unwrap();
-    let id2 = db.create_puzzle(env, 2, &sha256_hex("c"), "").unwrap();
+    let id0 = db.create_puzzle(env, 0, &sha256_hex("a"), "", None).unwrap();
+    let id1 = db.create_puzzle(env, 1, &sha256_hex("b"), "", None).unwrap();
+    let id2 = db.create_puzzle(env, 2, &sha256_hex("c"), "", None).unwrap();
 
     assert_eq!(id0, 0);
     assert_eq!(id1, 1);
@@ -70,7 +70,7 @@ fn test_mark_solved() {
     let db = test_db();
     let env = "testnet";
 
-    db.create_puzzle(env, 0, &sha256_hex("answer"), "").unwrap();
+    db.create_puzzle(env, 0, &sha256_hex("answer"), "", None).unwrap();
     db.mark_solved(env, 0, "0xWINNER").unwrap();
 
     let puzzle = db.get_puzzle(env, 0).unwrap().unwrap();
@@ -83,7 +83,7 @@ fn test_add_delegation_and_get_active() {
     let db = test_db();
     let env = "testnet";
 
-    db.create_puzzle(env, 0, &sha256_hex("answer"), "").unwrap();
+    db.create_puzzle(env, 0, &sha256_hex("answer"), "", None).unwrap();
 
     let deleg_json = r#"{"delegate":"0x0000000000000000000000000000000000000a11","delegator":"0xabc","authority":"0xfff","caveats":[{"enforcer":"0x123","terms":"0x000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000001234567890abcdef1234567890abcdef12345678","args":"0x"}],"salt":"0","signature":"0x"}"#;
 
@@ -100,7 +100,7 @@ fn test_update_prize() {
     let db = test_db();
     let env = "testnet";
 
-    db.create_puzzle(env, 0, &sha256_hex("answer"), "").unwrap();
+    db.create_puzzle(env, 0, &sha256_hex("answer"), "", None).unwrap();
 
     let deleg_json = r#"{"delegate":"0x0000000000000000000000000000000000000a11","delegator":"0xabc","authority":"0xfff","caveats":[{"enforcer":"0x123","terms":"0x000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000001234567890abcdef1234567890abcdef12345678","args":"0x"}],"salt":"0","signature":"0x"}"#;
 
@@ -117,7 +117,7 @@ fn test_update_delegation_replaces_active() {
     let db = test_db();
     let env = "testnet";
 
-    db.create_puzzle(env, 0, &sha256_hex("answer"), "").unwrap();
+    db.create_puzzle(env, 0, &sha256_hex("answer"), "", None).unwrap();
 
     let deleg1 = r#"{"delegate":"0x0000000000000000000000000000000000000a11","delegator":"0xabc","authority":"0xfff","caveats":[{"enforcer":"0x123","terms":"0x000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000001234567890abcdef1234567890abcdef12345678","args":"0x"}],"salt":"0","signature":"0x"}"#;
     let deleg2 = r#"{"delegate":"0x0000000000000000000000000000000000000a11","delegator":"0xdef","authority":"0xfff","caveats":[{"enforcer":"0x456","terms":"0x000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000001234567890abcdef1234567890abcdef12345678","args":"0x"}],"salt":"1","signature":"0x"}"#;
@@ -152,8 +152,8 @@ fn test_environment_isolation() {
 
     // Same puzzle ID 0 but different environments - the ID is per-environment
     // But SQLite PRIMARY KEY is global, so use different IDs
-    db.create_puzzle("testnet", 0, &sha256_hex("a"), "").unwrap();
-    db.create_puzzle("mainnet", 1, &sha256_hex("b"), "").unwrap();
+    db.create_puzzle("testnet", 0, &sha256_hex("a"), "", None).unwrap();
+    db.create_puzzle("mainnet", 1, &sha256_hex("b"), "", None).unwrap();
 
     let testnet = db.list_puzzles("testnet").unwrap();
     let mainnet = db.list_puzzles("mainnet").unwrap();
