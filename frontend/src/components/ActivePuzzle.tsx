@@ -14,23 +14,37 @@ import { BACKEND_URL } from "@/lib/contracts";
 import { ActivePuzzleSkeleton } from "./Skeleton";
 import { TrapperError } from "./TrapperError";
 
-interface ActivePuzzleResponse {
+/**
+ * Matches the backend `ActivePuzzleResponse` struct (flat shape).
+ * The backend serializes with `#[serde(rename_all = "camelCase")]`.
+ */
+interface ActivePuzzleData {
+  id: number;
+  clueURI: string;
+  prizeEth: string | null;
+  solved: boolean;
+  winner: string | null;
+  startsAt: string | null;
   status: "countdown" | "live" | "completed";
-  puzzle: {
-    id: number;
-    clueURI: string;
-    prizeEth: string;
-    solved: boolean;
-    winner: string;
-    startsAt: string;
-  } | null;
-  message: string;
+  delegation: Record<string, unknown> | null;
+}
+
+function getTrapperMessage(status: string): string {
+  switch (status) {
+    case "countdown":
+      return "Something is coming. The trap is being set...";
+    case "completed":
+      return "The Trapper will return...";
+    case "live":
+    default:
+      return "The ETH is trapped. Can you free it?";
+  }
 }
 
 export function ActivePuzzle() {
   const { playVoice, playSfx, playMusic } = useSoundEngine();
   const hasPlayedTeaserRef = useRef(false);
-  const [data, setData] = useState<ActivePuzzleResponse | null>(null);
+  const [data, setData] = useState<ActivePuzzleData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,7 +131,8 @@ export function ActivePuzzle() {
     );
   }
 
-  const { status, puzzle, message } = data;
+  const { status } = data;
+  const message = getTrapperMessage(status);
 
   return (
     <section className="relative overflow-hidden">
@@ -125,9 +140,8 @@ export function ActivePuzzle() {
       
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
         {/* Countdown State */}
-        {status === "countdown" && puzzle && (
+        {status === "countdown" && (
           <div className="max-w-4xl mx-auto space-y-12">
-            {/* Hero Content */}
             <div className="text-center space-y-8">
               <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl tracking-tight text-white leading-[1.1]">
                 The Next Puzzle
@@ -135,24 +149,22 @@ export function ActivePuzzle() {
                 <span className="text-gradient-green">Approaches...</span>
               </h2>
               
-              <CountdownTimer startsAt={puzzle.startsAt} />
+              {data.startsAt && <CountdownTimer startsAt={data.startsAt} />}
             </div>
 
-            {/* Prize and Message */}
             <div className="grid gap-8 lg:grid-cols-2">
-              <PrizeDisplay prizeEth={puzzle.prizeEth} />
+              <PrizeDisplay prizeEth={data.prizeEth} />
               <TrapperMessage message={message} />
             </div>
           </div>
         )}
 
         {/* Live State */}
-        {status === "live" && puzzle && (
+        {status === "live" && (
           <div className="space-y-12">
-            {/* Hero Header */}
             <div className="text-center space-y-4">
               <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl tracking-tight text-white leading-[1.1]">
-                Puzzle #{puzzle.id}
+                Puzzle #{data.id}
                 <br />
                 <span className="text-gradient-green">The Trap Is Set</span>
               </h2>
@@ -161,20 +173,17 @@ export function ActivePuzzle() {
               </p>
             </div>
 
-            {/* Main Content Grid */}
             <div className="grid gap-6 sm:gap-8 lg:grid-cols-3">
-              {/* Left Column: Clue and Intent */}
               <div className="lg:col-span-2 space-y-6 sm:space-y-8">
-                <ClueDisplay clueURI={puzzle.clueURI} />
+                <ClueDisplay clueURI={data.clueURI} />
                 <IntentVisualizer 
                   proofStatus="locked" 
                   prizeStatus="locked" 
                 />
               </div>
 
-              {/* Right Column: Actions and Prize */}
               <div className="space-y-6 sm:space-y-8">
-                <PrizeDisplay prizeEth={puzzle.prizeEth} />
+                <PrizeDisplay prizeEth={data.prizeEth} />
                 <BuyTickets />
                 <SubmitGuess />
               </div>
@@ -183,30 +192,28 @@ export function ActivePuzzle() {
         )}
 
         {/* Completed State */}
-        {status === "completed" && puzzle && (
+        {status === "completed" && (
           <div className="max-w-4xl mx-auto space-y-12">
-            {/* Victory Header */}
             <div className="text-center space-y-8">
               <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl tracking-tight leading-[1.1]">
-                <span className="text-trap-red animate-glow-red">THE TRAP HAS BEEN</span>
+                <span className="text-trap-red glow-red">THE TRAP HAS BEEN</span>
                 <br />
-                <span className="text-trap-gold animate-glow-gold">SPRUNG!</span>
+                <span className="text-trap-gold glow-gold">SPRUNG!</span>
               </h2>
               
-              {/* Winner Info */}
-              {puzzle.winner && (
+              {data.winner && (
                 <div className="glass-panel noise-overlay rounded-xl p-8 max-w-2xl mx-auto">
                   <div className="text-center space-y-4">
                     <div className="text-trap-gold text-4xl mb-4">👑</div>
                     <h3 className="font-display text-2xl text-trap-gold">
-                      Puzzle #{puzzle.id} Solved
+                      Puzzle #{data.id} Solved
                     </h3>
                     <div className="space-y-2">
                       <p className="font-mono text-sm text-trap-muted uppercase tracking-wider">
                         Winner
                       </p>
                       <p className="font-mono text-lg text-trap-text break-all">
-                        {puzzle.winner}
+                        {data.winner}
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -214,7 +221,7 @@ export function ActivePuzzle() {
                         Prize Claimed
                       </p>
                       <p className="font-display text-3xl text-trap-gold font-bold">
-                        {puzzle.prizeEth} ETH
+                        {data.prizeEth ?? "0"} ETH
                       </p>
                     </div>
                   </div>
@@ -222,21 +229,10 @@ export function ActivePuzzle() {
               )}
             </div>
 
-            {/* Message and Hall of Solvers */}
             <div className="grid gap-8 lg:grid-cols-2">
               <TrapperMessage message={message} />
               <HallOfSolvers />
             </div>
-          </div>
-        )}
-
-        {/* No puzzle state */}
-        {!puzzle && (
-          <div className="max-w-4xl mx-auto text-center space-y-8">
-            <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl tracking-tight text-white leading-[1.1]">
-              No Active Puzzle
-            </h2>
-            <TrapperMessage message={message} />
           </div>
         )}
       </div>
