@@ -98,6 +98,42 @@ function AnimatedCounter({ value }: { value: string }) {
   return <span>{display.toFixed(4)}</span>;
 }
 
+// ── Proof persistence helpers ───────────────────────────
+// Keyed by puzzleId so stale proofs from old puzzles don't resurface.
+const PROOF_STORAGE_KEY = "bear-trap-proof";
+
+function saveProof(puzzleId: string, proof: ProveResult): void {
+  try {
+    localStorage.setItem(PROOF_STORAGE_KEY, JSON.stringify({ puzzleId, proof }));
+  } catch {
+    // localStorage full or unavailable — non-fatal
+  }
+}
+
+function loadProof(puzzleId: string): ProveResult | null {
+  try {
+    const raw = localStorage.getItem(PROOF_STORAGE_KEY);
+    if (!raw) return null;
+    const { puzzleId: storedId, proof } = JSON.parse(raw);
+    // Only restore if it's for the current puzzle
+    if (String(storedId) !== String(puzzleId)) {
+      localStorage.removeItem(PROOF_STORAGE_KEY);
+      return null;
+    }
+    return proof as ProveResult;
+  } catch {
+    return null;
+  }
+}
+
+function clearSavedProof(): void {
+  try {
+    localStorage.removeItem(PROOF_STORAGE_KEY);
+  } catch {
+    // non-fatal
+  }
+}
+
 const stepTransition = { duration: 0.3 };
 const stepInitial = { opacity: 0, y: 20 };
 const stepAnimate = { opacity: 1, y: 0 };
@@ -115,6 +151,16 @@ export function SubmitGuess() {
   const [proofData, setProofData] = useState<ProveResult | null>(null);
   const [provingMessage, setProvingMessage] = useState<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Restore saved proof from localStorage on mount / puzzleId change
+  useEffect(() => {
+    if (isDemo || !puzzleId || puzzleId === "0") return;
+    const saved = loadProof(puzzleId);
+    if (saved && !proofData) {
+      setProofData(saved);
+      setStep("proof-ready");
+    }
+  }, [puzzleId, isDemo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const demoStep = isDemo ? demoConfig.submitStep : step;
   const demoProofData = isDemo ? (demoConfig.proofData as ProveResult | null) : proofData;
@@ -187,6 +233,7 @@ export function SubmitGuess() {
   useEffect(() => {
     if (!isConfirmed || markSolvedCalled.current || !redeemHash) return;
     markSolvedCalled.current = true;
+    clearSavedProof();
 
     fetch(`${BACKEND_URL}/api/mark-solved`, {
       method: "POST",
@@ -238,14 +285,16 @@ export function SubmitGuess() {
             clearInterval(pollingRef.current);
             pollingRef.current = null;
           }
-          setProofData({
+          const proof: ProveResult = {
             seal: statusData.seal!,
             journal: statusData.journal!,
             solverAddress: statusData.solverAddress!,
             solutionHash: statusData.solutionHash!,
             delegation: statusData.delegation ?? null,
             prizeEth: statusData.prizeEth ?? null,
-          });
+          };
+          setProofData(proof);
+          saveProof(puzzleId, proof);
           setStep("proof-ready");
           refetchTicketBalance();
         } else if (statusData.status === "failed") {
@@ -447,19 +496,27 @@ export function SubmitGuess() {
     setStep("confirming");
   }, [proofData, address, sendRedeemTx]);
 
-  // Reset flow
+  // Reset flow — if we have a valid proof, go back to proof-ready instead of wiping it
   const handleReset = useCallback(() => {
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
-    setStep("idle");
-    setPassphrase("");
     setErrorMessage("");
-    setProofData(null);
     setProvingMessage("");
     markSolvedCalled.current = false;
-  }, []);
+
+    if (proofData) {
+      // Proof still valid — let user retry the redeem tx
+      setStep("proof-ready");
+    } else {
+      // No proof — full reset
+      setStep("idle");
+      setPassphrase("");
+      setProofData(null);
+      clearSavedProof();
+    }
+  }, [proofData]);
 
   const displayStep = isDemo ? demoStep : step;
   const displayConnected = isDemo ? demoConnected : isConnected;
