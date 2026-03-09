@@ -18,12 +18,14 @@ import {
   TICKET_PRICE_DISPLAY,
   TICKET_PRICE_RAW,
 } from "@/lib/contracts";
+import { TrapperError } from "./TrapperError";
 
 export function BuyTickets() {
   const { address, isConnected, chain } = useAccount();
   const [ticketAmount, setTicketAmount] = useState("1");
   const [step, setStep] = useState<"approve" | "buy">("approve");
   const [batchStatus, setBatchStatus] = useState<"idle" | "pending" | "confirming" | "success" | "error">("idle");
+  const [txError, setTxError] = useState<string | null>(null);
 
   // Detect EIP-5792 batch capabilities
   const { data: capabilities } = useCapabilities();
@@ -67,21 +69,21 @@ export function BuyTickets() {
     query: { enabled: !!address },
   });
 
-  // Write: Approve
   const {
     data: approveHash,
     writeContract: approve,
     isPending: isApproving,
+    error: approveError,
   } = useWriteContract();
 
   const { isLoading: isApproveConfirming, isSuccess: isApproveConfirmed } =
     useWaitForTransactionReceipt({ hash: approveHash });
 
-  // Write: Buy tickets
   const {
     data: buyHash,
     writeContract: buy,
     isPending: isBuying,
+    error: buyError,
   } = useWriteContract();
 
   const { isLoading: isBuyConfirming, isSuccess: isBuyConfirmed } =
@@ -92,7 +94,11 @@ export function BuyTickets() {
   const hasEnoughBalance = osoBalance ? osoBalance >= totalCost : false;
   const hasEnoughAllowance = currentAllowance ? currentAllowance >= totalCost : false;
 
-  // Determine step based on allowance
+  useEffect(() => {
+    if (approveError) setTxError(approveError.message);
+    if (buyError) setTxError(buyError.message);
+  }, [approveError, buyError]);
+
   useEffect(() => {
     if (hasEnoughAllowance) {
       setStep("buy");
@@ -118,6 +124,7 @@ export function BuyTickets() {
 
   function handleApprove() {
     if (!parsedAmount || parsedAmount <= 0) return;
+    setTxError(null);
     approve({
       address: OSO_TOKEN_ADDRESS,
       abi: erc20Abi,
@@ -129,6 +136,7 @@ export function BuyTickets() {
 
   function handleBuy() {
     if (!parsedAmount || parsedAmount <= 0) return;
+    setTxError(null);
     buy({
       address: BEAR_TRAP_ADDRESS,
       abi: bearTrapAbi,
@@ -140,6 +148,7 @@ export function BuyTickets() {
 
   function handleBatchBuy() {
     if (!parsedAmount || parsedAmount <= 0) return;
+    setTxError(null);
     setBatchStatus("pending");
 
     const approveData = encodeFunctionData({
@@ -173,8 +182,9 @@ export function BuyTickets() {
           refetchTickets();
           refetchAllowance();
         },
-        onError: () => {
+        onError: (err) => {
           setBatchStatus("error");
+          setTxError(err instanceof Error ? err.message : "Transaction failed");
         },
       },
     );
@@ -252,7 +262,7 @@ export function BuyTickets() {
               value={ticketAmount}
               onChange={(e) => setTicketAmount(e.target.value)}
               disabled={!isConnected}
-              className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               placeholder="1"
             />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono text-trap-muted">
@@ -289,7 +299,7 @@ export function BuyTickets() {
             <button
               onClick={handleBatchBuy}
               disabled={isProcessing || parsedAmount <= 0 || !hasEnoughBalance}
-              className="w-full rounded-lg bg-trap-gold/10 border border-trap-gold/30 px-4 py-3 font-mono text-sm font-medium text-trap-gold hover:bg-trap-gold/20 hover:border-trap-gold/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-gold/10"
+              className="w-full rounded-lg bg-trap-gold/10 border border-trap-gold/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-gold hover:bg-trap-gold/20 hover:border-trap-gold/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-gold/10"
             >
               {isBatchPending || batchStatus === "pending"
                 ? "Confirming..."
@@ -304,9 +314,14 @@ export function BuyTickets() {
               </p>
             )}
             {batchStatus === "error" && (
-              <p className="text-xs font-mono text-trap-red text-center">
-                Transaction failed. Please try again.
-              </p>
+              <TrapperError
+                type="transaction"
+                message={txError || undefined}
+                onRetry={() => {
+                  setBatchStatus("idle");
+                  setTxError(null);
+                }}
+              />
             )}
           </div>
         ) : (
@@ -345,7 +360,7 @@ export function BuyTickets() {
               <button
                 onClick={handleApprove}
                 disabled={isProcessing || parsedAmount <= 0 || !hasEnoughBalance}
-                className="w-full rounded-lg bg-trap-amber/10 border border-trap-amber/30 px-4 py-3 font-mono text-sm font-medium text-trap-amber hover:bg-trap-amber/20 hover:border-trap-amber/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-amber/10"
+                className="w-full rounded-lg bg-trap-amber/10 border border-trap-amber/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-amber hover:bg-trap-amber/20 hover:border-trap-amber/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-amber/10"
               >
                 {isApproving
                   ? "Approving..."
@@ -359,7 +374,7 @@ export function BuyTickets() {
               <button
                 onClick={handleBuy}
                 disabled={isProcessing || parsedAmount <= 0}
-                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
+                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
               >
                 {isBuying
                   ? "Buying..."
@@ -373,6 +388,14 @@ export function BuyTickets() {
               <p className="text-xs font-mono text-trap-green text-center">
                 Tickets purchased successfully.
               </p>
+            )}
+
+            {txError && !isBuyConfirmed && batchStatus !== "error" && (
+              <TrapperError
+                type="transaction"
+                message={txError}
+                onRetry={() => setTxError(null)}
+              />
             )}
           </div>
         )}

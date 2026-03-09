@@ -50,6 +50,8 @@ const config: Config = {
         flicker: "flicker 3s ease-in-out infinite",
         shake: "shake 0.4s ease-in-out",
         "chain-break": "chainBreak 0.6s ease-out forwards",
+        shimmer: "shimmer 2s linear infinite",
+        "ember-glow": "ember-glow 2s ease-in-out infinite",
       },
       keyframes: {
         fadeIn: {
@@ -73,6 +75,20 @@ const config: Config = {
           "0%": { opacity: "1", transform: "scale(1)" },
           "50%": { opacity: "0.8", transform: "scale(1.1)" },
           "100%": { opacity: "0", transform: "scale(1.5) rotate(5deg)" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "-200% 0" },
+          "100%": { backgroundPosition: "200% 0" },
+        },
+        "ember-glow": {
+          "0%, 100%": {
+            boxShadow:
+              "0 0 8px rgba(183,65,14,0.2), 0 0 20px rgba(183,65,14,0.05)",
+          },
+          "50%": {
+            boxShadow:
+              "0 0 16px rgba(183,65,14,0.4), 0 0 40px rgba(183,65,14,0.1)",
+          },
         },
       },
     },

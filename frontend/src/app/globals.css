@@ -215,3 +215,23 @@
     transform: scale(1.5) rotate(5deg);
   }
 }
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes ember-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(183, 65, 14, 0.2),
+      0 0 20px rgba(183, 65, 14, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(183, 65, 14, 0.4),
+      0 0 40px rgba(183, 65, 14, 0.1);
+  }
+}

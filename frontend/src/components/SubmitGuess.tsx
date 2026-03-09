@@ -21,6 +21,7 @@ import {
 import type { Delegation as SdkDelegation } from "@metamask/smart-accounts-kit";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV } from "@/lib/contracts";
+import { TrapperError } from "./TrapperError";
 
 const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
 
@@ -481,7 +482,7 @@ export function SubmitGuess() {
                   value={puzzleId}
                   onChange={(e) => setPuzzleId(e.target.value)}
                   disabled={!isConnected || count === 0}
-                  className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none"
+                  className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none"
                 >
                   {count === 0 ? (
                     <option value="">No puzzles available</option>
@@ -504,7 +505,7 @@ export function SubmitGuess() {
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
                   disabled={!isConnected}
-                  className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 font-mono text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text placeholder-trap-muted/50 focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   placeholder="Enter the secret passphrase..."
                 />
               </div>
@@ -544,7 +545,7 @@ export function SubmitGuess() {
                   disabled={
                     !hasTickets || !passphrase.trim() || count === 0
                   }
-                  className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
+                  className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
                   onClick={handleSolvePuzzle}
                 >
                   {!hasTickets
@@ -617,7 +618,7 @@ export function SubmitGuess() {
                 transition={{ duration: 2, repeat: Infinity }}
                 className="inline-flex rounded-full mx-auto"
               >
-                <BearTrapSVG state="closed" size={64} />
+                <BearTrapSVG state="closed" size={48} />
               </motion.div>
               <div>
                 <p className="font-display text-lg text-trap-green">
@@ -629,7 +630,7 @@ export function SubmitGuess() {
               </div>
               <button
                 onClick={handleRedeemPrize}
-                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all"
+                className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all"
               >
                 Claim Prize
               </button>
@@ -683,7 +684,7 @@ export function SubmitGuess() {
               className="py-8 text-center space-y-4"
             >
               <div className="mx-auto">
-                <BearTrapSVG state="opening" size={64} />
+                <BearTrapSVG state="opening" size={48} />
               </div>
               <div>
                 <p className="font-display text-lg text-trap-green">
@@ -711,7 +712,7 @@ export function SubmitGuess() {
               )}
               <button
                 onClick={handleReset}
-                className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
+                className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 min-h-12 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
               >
                 Solve Another Puzzle
               </button>
@@ -733,7 +734,7 @@ export function SubmitGuess() {
               >
                 <div className="py-8 text-center space-y-4">
                   <div className="mx-auto">
-                    <BearTrapSVG state="snapping" size={64} />
+                    <BearTrapSVG state="snapping" size={48} />
                   </div>
                   <div>
                     <p className="font-display text-lg text-trap-red">
@@ -747,7 +748,7 @@ export function SubmitGuess() {
               </motion.div>
               <button
                 onClick={handleReset}
-                className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
+                className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 min-h-12 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
               >
                 Try Again
               </button>
@@ -766,20 +767,17 @@ export function SubmitGuess() {
                 transition={stepTransition}
                 className="space-y-4"
               >
-                <div className="rounded-lg border border-trap-red/20 bg-trap-red/5 p-4">
-                  <p className="text-xs font-mono text-trap-red mb-1 uppercase tracking-wider">
-                    Error
-                  </p>
-                  <p className="text-xs text-trap-muted break-all">
-                    {displayError || "An unknown error occurred"}
-                  </p>
-                </div>
-                <button
-                  onClick={handleReset}
-                  className="w-full rounded-lg bg-trap-dark border border-trap-border px-4 py-3 font-mono text-sm text-trap-muted hover:text-trap-text hover:border-trap-border transition-all"
-                >
-                  Try Again
-                </button>
+                <TrapperError
+                  type={
+                    displayError?.includes("proof") || displayError?.includes("Proof")
+                      ? "proof"
+                      : displayError?.includes("transaction") || displayError?.includes("Transaction") || displayError?.includes("rejected") || redeemError
+                      ? "transaction"
+                      : "generic"
+                  }
+                  message={displayError || undefined}
+                  onRetry={handleReset}
+                />
               </motion.div>
             )}
         </AnimatePresence>

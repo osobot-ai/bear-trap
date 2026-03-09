@@ -11,6 +11,8 @@ import { HallOfSolvers } from "./HallOfSolvers";
 import { BuyTickets } from "./BuyTickets";
 import { SubmitGuess } from "./SubmitGuess";
 import { BACKEND_URL } from "@/lib/contracts";
+import { ActivePuzzleSkeleton } from "./Skeleton";
+import { TrapperError } from "./TrapperError";
 
 interface ActivePuzzleResponse {
   status: "countdown" | "live" | "completed";
@@ -76,17 +78,26 @@ export function ActivePuzzle() {
     }
   }, [activeStatus, playSfx, playMusic]);
 
+  const handleRetry = () => {
+    setError(null);
+    setIsLoading(true);
+    fetch(`${BACKEND_URL}/api/puzzle/active`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((puzzleData) => setData(puzzleData))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load puzzle");
+      })
+      .finally(() => setIsLoading(false));
+  };
+
   if (isLoading) {
     return (
       <section className="relative overflow-hidden">
-        <div className="mx-auto max-w-7xl px-6 py-16 sm:py-24">
-          <div className="text-center space-y-8">
-            <div className="space-y-4">
-              <div className="h-12 bg-trap-border/20 rounded-lg animate-pulse mx-auto max-w-md" />
-              <div className="h-6 bg-trap-border/20 rounded-lg animate-pulse mx-auto max-w-sm" />
-            </div>
-            <div className="h-64 bg-trap-border/20 rounded-xl animate-pulse mx-auto max-w-2xl" />
-          </div>
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
+          <ActivePuzzleSkeleton />
         </div>
       </section>
     );
@@ -95,16 +106,12 @@ export function ActivePuzzle() {
   if (error || !data) {
     return (
       <section className="relative overflow-hidden">
-        <div className="mx-auto max-w-7xl px-6 py-16 sm:py-24">
-          <div className="text-center space-y-8">
-            <div className="text-trap-red text-6xl mb-4">⚠</div>
-            <h2 className="font-display text-3xl text-trap-red">
-              The Trap Has Malfunctioned
-            </h2>
-            <p className="font-mono text-sm text-trap-muted max-w-lg mx-auto">
-              {error || "Could not connect to the Bear Trap backend"}
-            </p>
-          </div>
+        <div className="mx-auto max-w-2xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
+          <TrapperError
+            type="network"
+            message={error || "Could not connect to the Bear Trap backend"}
+            onRetry={handleRetry}
+          />
         </div>
       </section>
     );
@@ -116,7 +123,7 @@ export function ActivePuzzle() {
     <section className="relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-trap-green/[0.02] to-transparent" />
       
-      <div className="mx-auto max-w-7xl px-6 py-16 sm:py-24">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24">
         {/* Countdown State */}
         {status === "countdown" && puzzle && (
           <div className="max-w-4xl mx-auto space-y-12">
@@ -155,9 +162,9 @@ export function ActivePuzzle() {
             </div>
 
             {/* Main Content Grid */}
-            <div className="grid gap-8 lg:grid-cols-3">
+            <div className="grid gap-6 sm:gap-8 lg:grid-cols-3">
               {/* Left Column: Clue and Intent */}
-              <div className="lg:col-span-2 space-y-8">
+              <div className="lg:col-span-2 space-y-6 sm:space-y-8">
                 <ClueDisplay clueURI={puzzle.clueURI} />
                 <IntentVisualizer 
                   proofStatus="locked" 
@@ -166,7 +173,7 @@ export function ActivePuzzle() {
               </div>
 
               {/* Right Column: Actions and Prize */}
-              <div className="space-y-8">
+              <div className="space-y-6 sm:space-y-8">
                 <PrizeDisplay prizeEth={puzzle.prizeEth} />
                 <BuyTickets />
                 <SubmitGuess />

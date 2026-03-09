@@ -82,52 +82,52 @@ export function CountdownTimer({ startsAt }: CountdownTimerProps) {
         transition={{ duration: 1.5, repeat: isUrgent ? Infinity : 0 }}
         className="rounded-xl p-4"
       >
-        <div className="flex items-center justify-center gap-4 sm:gap-6">
+        <div className="grid grid-cols-4 gap-2 sm:flex sm:items-center sm:justify-center sm:gap-4 md:gap-6 max-w-md sm:max-w-none mx-auto">
           <div className="text-center">
-            <div className={`font-display text-4xl sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
+            <div className={`font-display text-[clamp(1.75rem,8vw,3.75rem)] sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
               {formatDigits(timeLeft.days)}
             </div>
-            <div className="text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
+            <div className="text-[10px] sm:text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
               Days
             </div>
           </div>
           
-          <div className={`${isUrgent ? 'text-trap-red/50' : 'text-trap-gold/50'} text-3xl sm:text-4xl lg:text-5xl font-display animate-pulse`}>
+          <div className={`${isUrgent ? 'text-trap-red/50' : 'text-trap-gold/50'} hidden sm:block text-3xl sm:text-4xl lg:text-5xl font-display animate-pulse`}>
             :
           </div>
           
           <div className="text-center">
-            <div className={`font-display text-4xl sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
+            <div className={`font-display text-[clamp(1.75rem,8vw,3.75rem)] sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
               {formatDigits(timeLeft.hours)}
             </div>
-            <div className="text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
+            <div className="text-[10px] sm:text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
               Hours
             </div>
           </div>
           
-          <div className={`${isUrgent ? 'text-trap-red/50' : 'text-trap-gold/50'} text-3xl sm:text-4xl lg:text-5xl font-display animate-pulse`}>
+          <div className={`${isUrgent ? 'text-trap-red/50' : 'text-trap-gold/50'} hidden sm:block text-3xl sm:text-4xl lg:text-5xl font-display animate-pulse`}>
             :
           </div>
           
           <div className="text-center">
-            <div className={`font-display text-4xl sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
+            <div className={`font-display text-[clamp(1.75rem,8vw,3.75rem)] sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
               {formatDigits(timeLeft.minutes)}
             </div>
-            <div className="text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
-              Minutes
+            <div className="text-[10px] sm:text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
+              Min
             </div>
           </div>
           
-          <div className={`${isUrgent ? 'text-trap-red/50' : 'text-trap-gold/50'} text-3xl sm:text-4xl lg:text-5xl font-display animate-pulse`}>
+          <div className={`${isUrgent ? 'text-trap-red/50' : 'text-trap-gold/50'} hidden sm:block text-3xl sm:text-4xl lg:text-5xl font-display animate-pulse`}>
             :
           </div>
           
           <div className="text-center">
-            <div className={`font-display text-4xl sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
+            <div className={`font-display text-[clamp(1.75rem,8vw,3.75rem)] sm:text-5xl lg:text-6xl ${digitColor} ${glowClass}`}>
               {formatDigits(timeLeft.seconds)}
             </div>
-            <div className="text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
-              Seconds
+            <div className="text-[10px] sm:text-xs font-mono text-trap-muted uppercase tracking-wider mt-1">
+              Sec
             </div>
           </div>
         </div>

@@ -92,7 +92,7 @@ export function IntentVisualizer({ proofStatus, prizeStatus }: IntentVisualizerP
             animate={{ opacity: 1 }}
             exit={{ opacity: 0.8 }}
             transition={{ duration: 0.3 }}
-            className="flex items-center justify-center gap-8"
+            className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-8"
           >
             {/* Proof Lock */}
             <div className="text-center space-y-3">
@@ -161,9 +161,8 @@ export function IntentVisualizer({ proofStatus, prizeStatus }: IntentVisualizerP
             </div>
 
             {/* Chain Connection */}
-            <div className="flex items-center">
+            <div className="flex items-center sm:rotate-0 rotate-90">
               <AnimatePresence mode="wait">
-                {/* Claimed: particle shatter */}
                 {prizeStatus === 'claimed' ? (
                   <div className="relative w-16 h-4" key="chain-shatter">
                     {particles.map((p, i) => (
@@ -183,7 +182,6 @@ export function IntentVisualizer({ proofStatus, prizeStatus }: IntentVisualizerP
                     ))}
                   </div>
                 ) : proofStatus === 'proving' ? (
-                  /* Proving: amber glow traveling along the chain */
                   <motion.div
                     key="chain-proving"
                     className="w-16 h-1 rounded-full overflow-hidden relative"
@@ -197,7 +195,6 @@ export function IntentVisualizer({ proofStatus, prizeStatus }: IntentVisualizerP
                     />
                   </motion.div>
                 ) : proofStatus === 'verified' ? (
-                  /* Verified: left half green, right half grey */
                   <div key="chain-verified" className="flex w-16 h-1 rounded-full overflow-hidden">
                     <motion.div
                       className="w-1/2 h-full bg-trap-green/60"
@@ -209,7 +206,6 @@ export function IntentVisualizer({ proofStatus, prizeStatus }: IntentVisualizerP
                     <div className="w-1/2 h-full bg-trap-chain/30" />
                   </div>
                 ) : proofStatus === 'failed' ? (
-                  /* Failed: chain flashes red */
                   <motion.div
                     key="chain-failed"
                     className="w-16 h-1 rounded-full"
@@ -219,7 +215,6 @@ export function IntentVisualizer({ proofStatus, prizeStatus }: IntentVisualizerP
                     transition={{ duration: 0.6, repeat: 3, ease: "easeInOut" }}
                   />
                 ) : (
-                  /* Locked: subtle pulse on chain dashes */
                   <motion.div
                     key="chain-locked"
                     className="w-16 h-0 border-t-2 border-dashed border-trap-chain/50"
