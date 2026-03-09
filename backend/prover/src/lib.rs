@@ -275,26 +275,20 @@ pub async fn submit_proof(
         .with_uploader_config(&storage_config)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to configure storage uploader: {e}"))?
-        .with_skip_preflight(true)
         .build()
         .await?;
 
     tracing::info!("Submitting proof request to Boundless Market (offchain-first)...");
     tracing::info!("Storage config: uploader={:?}, pinata_jwt_set={}", storage_config.storage_uploader, config.pinata_jwt.is_some());
 
-    let image_id_hex = "8da19e69de35e4e648d8ca7e6779069b50c09e9241ddd8cac6a6a199d0c7e8ed";
-    let image_id_bytes: [u8; 32] = hex::decode(image_id_hex)
-        .expect("Invalid image ID hex")
-        .try_into()
-        .expect("Image ID must be 32 bytes");
-
+    // Let the SDK handle image_id, cycles, and journal via preflight execution.
+    // Previously we passed an empty journal and hardcoded image_id, which caused
+    // the Boundless predicate digest to mismatch the actual guest output — provers
+    // rejected every request because the journal digest didn't match.
     let request = client
         .new_request()
         .with_program(guest_elf)
-        .with_stdin(encoded_input)
-        .with_image_id(risc0_zkvm::sha::Digest::from(image_id_bytes))
-        .with_cycles(1 << 24)
-        .with_journal(risc0_zkvm::Journal::new(vec![]));
+        .with_stdin(encoded_input);
 
     let (request_id, expires_at) = match client.submit_offchain(request.clone()).await {
         Ok(result) => {
