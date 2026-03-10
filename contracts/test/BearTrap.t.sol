@@ -3,7 +3,7 @@ pragma solidity 0.8.23;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {BearTrap, IERC20} from "../src/BearTrap.sol";
-import {ZKPEnforcer} from "../src/ZKPEnforcer.sol";
+import {ZKPEnforcer, PuzzleOutput} from "../src/ZKPEnforcer.sol";
 import {IBearTrap} from "../src/IBearTrap.sol";
 import {Ownable} from "openzeppelin/contracts/access/Ownable.sol";
 import {ModeCode} from "delegation-framework/utils/Types.sol";
@@ -310,7 +310,7 @@ contract BearTrapTest is Test {
 
         bytes memory operatorSig = _signOperator(player, puzzleId, solutionHash);
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, puzzleId, operatorSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -333,7 +333,7 @@ contract BearTrapTest is Test {
 
         bytes memory operatorSig = _signOperator(player, puzzleId, solutionHash);
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, puzzleId, operatorSig));
         bytes memory seal = hex"baadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -359,7 +359,7 @@ contract BearTrapTest is Test {
         address wrongSolver = address(0xDEAD);
         bytes memory operatorSig = _signOperator(wrongSolver, puzzleId, solutionHash);
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(wrongSolver, solutionHash, puzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(wrongSolver, solutionHash, puzzleId, operatorSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -385,7 +385,7 @@ contract BearTrapTest is Test {
 
         bytes memory operatorSig = _signOperator(player, journalPuzzleId, solutionHash);
         bytes memory terms = abi.encode(imageId, termsPuzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, journalPuzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, journalPuzzleId, operatorSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -415,7 +415,7 @@ contract BearTrapTest is Test {
         bytes memory wrongSig = abi.encodePacked(r, s, v);
 
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId, wrongSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, puzzleId, wrongSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -444,7 +444,7 @@ contract BearTrapTest is Test {
         bytes memory operatorSig = abi.encodePacked(r, s, v);
 
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, puzzleId, operatorSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -474,7 +474,7 @@ contract BearTrapTest is Test {
         bytes memory operatorSig = abi.encodePacked(r, s, v);
 
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, puzzleId, operatorSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
@@ -504,7 +504,7 @@ contract BearTrapTest is Test {
         bytes memory operatorSig = abi.encodePacked(r, s, v);
 
         bytes memory terms = abi.encode(imageId, puzzleId, operatorAddr);
-        bytes memory journal = abi.encode(player, solutionHash, puzzleId, operatorSig);
+        bytes memory journal = abi.encode(PuzzleOutput(player, solutionHash, puzzleId, operatorSig));
         bytes memory seal = hex"deadbeef";
         bytes memory args = abi.encode(seal, journal);
 
