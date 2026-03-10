@@ -6,6 +6,18 @@ import {ModeCode} from "delegation-framework/utils/Types.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 import {ECDSA} from "openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
+/// @notice Guest program journal output structure.
+/// Must match the `PuzzleOutput` struct in the RISC0 guest program.
+/// The guest uses alloy's `SolValue::abi_encode()` which produces struct-wrapped
+/// ABI encoding (with an outer offset for dynamic types). We decode with
+/// `abi.decode(journal, (PuzzleOutput))` to match this format.
+struct PuzzleOutput {
+    address solverAddress;
+    bytes32 solutionHash;
+    uint256 puzzleId;
+    bytes operatorSig;
+}
+
 /// @title ZKPEnforcer
 /// @author Bear Trap
 /// @notice A custom ERC-7710 caveat enforcer that validates RISC0 ZK proofs during
@@ -21,8 +33,7 @@ import {ECDSA} from "openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 ///   args (set by redeemer at call time, NOT signed):
 ///     abi.encode(bytes seal, bytes journal)
 ///     - seal: RISC0 Groth16/SetVerifier proof bytes
-///     - journal: ABI-encoded guest program public outputs
-///       (address solverAddress, bytes32 solutionHash, uint256 puzzleId, bytes operatorSig)
+///     - journal: struct-encoded guest program public outputs (PuzzleOutput)
 ///
 ///   The enforcer verifies:
 ///     1. The RISC0 proof is valid via IRiscZeroVerifier.verify(seal, imageId, sha256(journal))
@@ -73,15 +84,16 @@ contract ZKPEnforcer is CaveatEnforcer {
 
         verifier.verify(seal, imageId, sha256(journal));
 
-        (address solverAddress, bytes32 solutionHash, uint256 journalPuzzleId, bytes memory operatorSig) =
-            abi.decode(journal, (address, bytes32, uint256, bytes));
+        // Decode as struct — matches alloy's SolValue::abi_encode() output format
+        // which wraps dynamic structs with an outer offset pointer.
+        PuzzleOutput memory output = abi.decode(journal, (PuzzleOutput));
 
-        if (solverAddress != _redeemer) revert SolverAddressMismatch();
-        if (journalPuzzleId != termsPuzzleId) revert PuzzleIdMismatch();
+        if (output.solverAddress != _redeemer) revert SolverAddressMismatch();
+        if (output.puzzleId != termsPuzzleId) revert PuzzleIdMismatch();
 
-        _verifyOperator(solverAddress, journalPuzzleId, solutionHash, operatorSig, operatorAddress);
+        _verifyOperator(output.solverAddress, output.puzzleId, output.solutionHash, output.operatorSig, operatorAddress);
 
-        emit ProofVerified(_redeemer, solutionHash, imageId, journalPuzzleId, operatorAddress);
+        emit ProofVerified(_redeemer, output.solutionHash, imageId, output.puzzleId, operatorAddress);
     }
 
     /// @dev Recover operator address from signature and verify it matches the trusted operator.
