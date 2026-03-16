@@ -23,6 +23,7 @@ import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { BEAR_TRAP_ADDRESS, DELEGATION_MANAGER_ADDRESS, BASE_CHAIN_ID, BACKEND_URL, ACTIVE_ENV, ZKP_ENFORCER_ADDRESS } from "@/lib/contracts";
 import { TrapperError } from "./TrapperError";
 import { useDemo } from "@/lib/demo-context";
+import { usePuzzleFlow } from "@/lib/puzzle-flow-context";
 
 const EXPLORER_URL = ACTIVE_ENV === "mainnet" ? "https://basescan.org" : "https://sepolia.basescan.org";
 
@@ -144,6 +145,7 @@ export function SubmitGuess() {
   const { signMessageAsync } = useSignMessage();
   const { playSfx, playVoice, playMusic, stopMusic } = useSoundEngine();
   const { isDemo, demoState, demoConfig, setDemoState } = useDemo();
+  const { setSolveStep } = usePuzzleFlow();
   const [puzzleId, setPuzzleId] = useState("0");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
@@ -167,6 +169,13 @@ export function SubmitGuess() {
   const demoAddress = isDemo ? demoConfig.wallet.address : address;
   const demoConnected = isDemo ? demoConfig.wallet.isConnected : isConnected;
   const demoTickets = isDemo ? demoConfig.tickets.balance : undefined;
+
+  // Sync real-mode step to shared context so IntentVisualizer can react
+  useEffect(() => {
+    if (!isDemo) {
+      setSolveStep(step);
+    }
+  }, [step, isDemo, setSolveStep]);
 
   const activeStep = isDemo ? demoConfig.submitStep : step;
   useEffect(() => {
@@ -218,6 +227,13 @@ export function SubmitGuess() {
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({ hash: redeemHash });
+
+  // Sync transaction confirmation to shared context (step stays "confirming" but UI shows success)
+  useEffect(() => {
+    if (!isDemo && isConfirmed) {
+      setSolveStep("success");
+    }
+  }, [isConfirmed, isDemo, setSolveStep]);
 
   const markSolvedCalled = useRef(false);
 

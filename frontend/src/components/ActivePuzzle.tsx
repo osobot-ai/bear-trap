@@ -14,6 +14,7 @@ import { BACKEND_URL } from "@/lib/contracts";
 import { ActivePuzzleSkeleton } from "./Skeleton";
 import { TrapperError } from "./TrapperError";
 import { useDemo } from "@/lib/demo-context";
+import { usePuzzleFlow, getIntentPropsFromSolveStep } from "@/lib/puzzle-flow-context";
 
 /**
  * Matches the backend `ActivePuzzleResponse` struct (flat shape).
@@ -45,6 +46,7 @@ function getTrapperMessage(status: string): string {
 export function ActivePuzzle() {
   const { playVoice, playSfx, playMusic, stopMusic } = useSoundEngine();
   const { isDemo, demoState, demoConfig } = useDemo();
+  const { solveStep } = usePuzzleFlow();
   const hasPlayedTeaserRef = useRef(false);
   const [data, setData] = useState<ActivePuzzleData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -231,8 +233,8 @@ export function ActivePuzzle() {
               <div className="lg:col-span-2 space-y-6 sm:space-y-8">
                 <ClueDisplay clueURI={activeData.clueURI} />
                 <IntentVisualizer 
-                  proofStatus={isDemo ? demoConfig.intentProps.proofStatus : "locked"} 
-                  prizeStatus={isDemo ? demoConfig.intentProps.prizeStatus : "locked"} 
+                  proofStatus={isDemo ? demoConfig.intentProps.proofStatus : getIntentPropsFromSolveStep(solveStep).proofStatus} 
+                  prizeStatus={isDemo ? demoConfig.intentProps.prizeStatus : getIntentPropsFromSolveStep(solveStep).prizeStatus} 
                 />
               </div>
 
