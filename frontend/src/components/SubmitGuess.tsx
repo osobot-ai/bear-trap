@@ -228,10 +228,11 @@ export function SubmitGuess() {
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({ hash: redeemHash });
 
-  // Sync transaction confirmation to shared context (step stays "confirming" but UI shows success)
+  // Sync transaction confirmation to local step + shared context
   useEffect(() => {
     if (!isDemo && isConfirmed) {
-      setSolveStep("success");
+      setStep("success");      // triggers local audio (prize_claimed, victory, trapper-broken)
+      setSolveStep("success"); // triggers IntentVisualizer claimed state
     }
   }, [isConfirmed, isDemo, setSolveStep]);
 

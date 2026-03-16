@@ -31,3 +31,4 @@ out/
 # SQLite database
 data/
 .agent-prompt.md
+.vercel
