@@ -10,6 +10,27 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.ico",
   },
+  openGraph: {
+    title: "Bear Trap -- The Trap Is Set",
+    description:
+      "Solve cryptographic puzzles with ZK proofs. Burn $OSO tokens to guess. Win the prize pool.",
+    images: [
+      {
+        url: "/og-image.jpg",
+        width: 1280,
+        height: 853,
+        alt: "Bear Trap - The Trap Is Set",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Bear Trap -- The Trap Is Set",
+    description:
+      "Solve cryptographic puzzles with ZK proofs. Burn $OSO tokens to guess. Win the prize pool.",
+    images: ["/og-image.jpg"],
+  },
 };
 
 export default function RootLayout({
