@@ -15,6 +15,7 @@ declare module "@tanstack/react-query" {
         [key: string]: unknown;
       };
     });
+    invalidateQueries(filters?: { queryKey?: readonly unknown[] }): Promise<void>;
   }
 
   export function QueryClientProvider(props: {
