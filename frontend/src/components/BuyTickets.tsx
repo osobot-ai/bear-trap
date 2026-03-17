@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   useAccount,
   useReadContract,
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { useCapabilities, useSendCalls } from "wagmi/experimental";
+import { useCapabilities, useSendCalls, useCallsStatus } from "wagmi/experimental";
+import { useQueryClient } from "@tanstack/react-query";
 import { formatUnits, encodeFunctionData } from "viem";
 import { bearTrapAbi } from "@/lib/abi/bearTrap";
 import { erc20Abi } from "@/lib/abi/erc20";
@@ -24,11 +25,18 @@ export function BuyTickets() {
   const { address, isConnected, chain } = useAccount();
   const { isDemo, demoConfig } = useDemo();
   const { priceRaw, priceDisplay } = useTicketPrice();
+  const queryClient = useQueryClient();
   const [ticketAmount, setTicketAmount] = useState("1");
   const [step, setStep] = useState<"approve" | "buy">("approve");
   const [batchStatus, setBatchStatus] = useState<"idle" | "pending" | "confirming" | "success" | "error">("idle");
+  const [batchId, setBatchId] = useState<string | undefined>(undefined);
   const [txError, setTxError] = useState<string | null>(null);
   const [demoBuySuccess, setDemoBuySuccess] = useState(false);
+
+  // Invalidate all contract read queries so both BuyTickets AND SubmitGuess get fresh data
+  const invalidateContractQueries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["readContract"] });
+  }, [queryClient]);
 
   // Detect EIP-5792 batch capabilities
   const { data: capabilities } = useCapabilities();
@@ -41,6 +49,12 @@ export function BuyTickets() {
 
   // Batched sendCalls hook
   const { sendCalls, isPending: isBatchPending } = useSendCalls();
+
+  // Track batch tx confirmation via wallet_getCallsStatus
+  const { data: callsStatus } = useCallsStatus({
+    id: batchId as string,
+    query: { enabled: !!batchId && batchStatus === "confirming", refetchInterval: 2000 },
+  });
 
   // Read $OSO balance
   const { data: osoBalance } = useReadContract({
@@ -113,17 +127,25 @@ export function BuyTickets() {
   // Refetch after successful approve
   useEffect(() => {
     if (isApproveConfirmed) {
-      refetchAllowance();
+      invalidateContractQueries();
     }
-  }, [isApproveConfirmed, refetchAllowance]);
+  }, [isApproveConfirmed, invalidateContractQueries]);
 
-  // Refetch after successful buy
+  // Refetch after successful buy (non-batch flow)
   useEffect(() => {
     if (isBuyConfirmed) {
-      refetchTickets();
-      refetchAllowance();
+      invalidateContractQueries();
     }
-  }, [isBuyConfirmed, refetchTickets, refetchAllowance]);
+  }, [isBuyConfirmed, invalidateContractQueries]);
+
+  // Refetch after batch tx confirms on-chain
+  useEffect(() => {
+    if (callsStatus?.status === "CONFIRMED") {
+      setBatchStatus("success");
+      setBatchId(undefined);
+      invalidateContractQueries();
+    }
+  }, [callsStatus?.status, invalidateContractQueries]);
 
   function handleApprove() {
     if (!parsedAmount || parsedAmount <= 0) return;
@@ -180,10 +202,11 @@ export function BuyTickets() {
         ],
       },
       {
-        onSuccess: () => {
-          setBatchStatus("success");
-          refetchTickets();
-          refetchAllowance();
+        onSuccess: (result) => {
+          // sendCalls returns { id: string } or just a string depending on wagmi version
+          const id = typeof result === "string" ? result : (result as { id?: string })?.id;
+          setBatchId(id);
+          setBatchStatus("confirming");
         },
         onError: (err) => {
           setBatchStatus("error");
@@ -193,7 +216,7 @@ export function BuyTickets() {
     );
   }
 
-  const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming || isBatchPending || batchStatus === "pending";
+  const isProcessing = isApproving || isApproveConfirming || isBuying || isBuyConfirming || isBatchPending || batchStatus === "pending" || batchStatus === "confirming";
 
   const displayConnected = isDemo ? demoConfig.wallet.isConnected : isConnected;
 
@@ -335,7 +358,7 @@ export function BuyTickets() {
               disabled={isProcessing || parsedAmount <= 0 || !hasEnoughBalance}
               className="w-full rounded-lg bg-trap-gold/10 border border-trap-gold/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-gold hover:bg-trap-gold/20 hover:border-trap-gold/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-gold/10"
             >
-              {isBatchPending || batchStatus === "pending"
+              {isBatchPending || batchStatus === "pending" || batchStatus === "confirming"
                 ? "Confirming..."
                 : !hasEnoughBalance
                 ? "Insufficient $OSO"
