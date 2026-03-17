@@ -51,16 +51,16 @@ export default function Home() {
         <div className="mx-auto max-w-7xl px-6 py-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-xs text-trap-muted font-mono">
-              Bear Trap Protocol -- Built on Base
+              Bear Trap Protocol -- Built with MetaMask Smart Accounts Kit
             </p>
             <div className="flex items-center gap-6">
               <a
-                href={EXPLORER_URL}
+                href="https://docs.metamask.io/smart-accounts-kit"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-trap-muted hover:text-trap-green transition-colors font-mono"
               >
-                Basescan
+                Smart Accounts Kit
               </a>
               <a
                 href="https://docs.boundless.network"
