@@ -109,6 +109,9 @@ export function BuyTickets() {
   const parsedAmount = parseInt(ticketAmount) || 0;
   const totalCost = priceRaw * BigInt(parsedAmount);
   const hasEnoughBalance = osoBalance ? osoBalance >= totalCost : false;
+  const canAffordOneTicket = osoBalance ? osoBalance >= priceRaw : false;
+
+  const FLAUNCH_URL = "https://flaunch.gg/base/coin/0xc78fabc2cb5b9cf59e0af3da8e3bc46d47753a4e";
   const hasEnoughAllowance = currentAllowance ? currentAllowance >= totalCost : false;
 
   useEffect(() => {
@@ -325,6 +328,27 @@ export function BuyTickets() {
             <p className="text-xs text-trap-muted font-mono">
               Connect your wallet to buy tickets
             </p>
+          </div>
+        ) : !isDemo && !canAffordOneTicket && osoBalance !== undefined ? (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-trap-amber/30 bg-trap-amber/5 p-4 text-center">
+              <p className="text-xs text-trap-muted font-mono mb-3">
+                You need at least <span className="text-trap-amber">{priceDisplay} $OSO</span> to buy a ticket
+              </p>
+              <a
+                href={FLAUNCH_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-trap-amber/10 border border-trap-amber/30 px-6 py-3 min-h-12 font-mono text-sm font-medium text-trap-amber hover:bg-trap-amber/20 hover:border-trap-amber/50 transition-all"
+              >
+                Get $OSO
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </a>
+            </div>
           </div>
         ) : isDemo ? (
           <div className="space-y-3">

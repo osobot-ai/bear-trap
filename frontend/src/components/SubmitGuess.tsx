@@ -140,23 +140,63 @@ const stepInitial = { opacity: 0, y: 20 };
 const stepAnimate = { opacity: 1, y: 0 };
 const stepExit = { opacity: 0, y: -10 };
 
+interface PuzzleListItem {
+  id: number;
+  solved: boolean;
+  winner: string | null;
+}
+
 export function SubmitGuess() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { playSfx, playVoice, playMusic, stopMusic } = useSoundEngine();
   const { isDemo, demoState, demoConfig, setDemoState } = useDemo();
   const { setSolveStep } = usePuzzleFlow();
-  const [puzzleId, setPuzzleId] = useState("0");
+  const [puzzleId, setPuzzleId] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [proofData, setProofData] = useState<ProveResult | null>(null);
   const [provingMessage, setProvingMessage] = useState<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [unsolvedPuzzles, setUnsolvedPuzzles] = useState<PuzzleListItem[]>([]);
+
+  // Fetch puzzles list and active puzzle, then set defaults
+  useEffect(() => {
+    if (isDemo) return;
+    const fetchPuzzles = async () => {
+      try {
+        const [puzzlesRes, activeRes] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/puzzles`),
+          fetch(`${BACKEND_URL}/api/puzzle/active`),
+        ]);
+        if (puzzlesRes.ok) {
+          const allPuzzles: PuzzleListItem[] = await puzzlesRes.json();
+          const unsolved = allPuzzles.filter((p) => !p.solved);
+          setUnsolvedPuzzles(unsolved);
+
+          // Default to active puzzle if available, otherwise first unsolved
+          if (activeRes.ok) {
+            const active = await activeRes.json();
+            if (active?.id !== undefined && !active.solved) {
+              setPuzzleId(String(active.id));
+            } else if (unsolved.length > 0) {
+              setPuzzleId(String(unsolved[0].id));
+            }
+          } else if (unsolved.length > 0) {
+            setPuzzleId(String(unsolved[0].id));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch puzzles:", err);
+      }
+    };
+    fetchPuzzles();
+  }, [isDemo]);
 
   // Restore saved proof from localStorage on mount / puzzleId change
   useEffect(() => {
-    if (isDemo || !puzzleId || puzzleId === "0") return;
+    if (isDemo || !puzzleId || puzzleId === "") return;
     const saved = loadProof(puzzleId);
     if (saved && !proofData) {
       setProofData(saved);
@@ -587,15 +627,25 @@ export function SubmitGuess() {
                 <select
                   value={puzzleId}
                   onChange={(e) => setPuzzleId(e.target.value)}
-                  disabled={!displayConnected || count === 0}
+                  disabled={!displayConnected || (isDemo ? count === 0 : unsolvedPuzzles.length === 0)}
                   className="w-full rounded-lg bg-trap-black/80 border border-trap-border px-4 py-3 min-h-12 font-mono text-base sm:text-sm text-trap-text focus:outline-none focus:border-trap-green/50 focus:ring-1 focus:ring-trap-green/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed appearance-none"
                 >
-                  {count === 0 ? (
-                    <option value="">No puzzles available</option>
+                  {isDemo ? (
+                    count === 0 ? (
+                      <option value="">No puzzles available</option>
+                    ) : (
+                      Array.from({ length: count }, (_, i) => (
+                        <option key={i} value={i}>
+                          Puzzle #{i}
+                        </option>
+                      ))
+                    )
+                  ) : unsolvedPuzzles.length === 0 ? (
+                    <option value="">No unsolved puzzles</option>
                   ) : (
-                    Array.from({ length: count }, (_, i) => (
-                      <option key={i} value={i}>
-                        Puzzle #{i}
+                    unsolvedPuzzles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        Puzzle #{p.id}
                       </option>
                     ))
                   )}
@@ -649,14 +699,14 @@ export function SubmitGuess() {
               ) : (
                 <button
                   disabled={
-                    !isDemo && (!hasTickets || !passphrase.trim() || count === 0)
+                    !isDemo && (!hasTickets || !passphrase.trim() || (!isDemo && unsolvedPuzzles.length === 0))
                   }
                   className="w-full rounded-lg bg-trap-green/10 border border-trap-green/30 px-4 py-3 min-h-12 font-mono text-sm font-medium text-trap-green hover:bg-trap-green/20 hover:border-trap-green/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-trap-green/10"
                   onClick={isDemo ? handleDemoSolve : handleSolvePuzzle}
                 >
                   {!hasTickets
                     ? "No tickets -- buy tickets first"
-                    : count === 0
+                    : !isDemo && unsolvedPuzzles.length === 0
                     ? "No puzzles available"
                     : "Solve Puzzle"}
                 </button>
