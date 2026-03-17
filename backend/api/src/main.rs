@@ -28,6 +28,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use axum::extract::DefaultBodyLimit;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -68,6 +69,8 @@ struct AppState {
 
 const RATE_LIMIT_MAX_REQUESTS: usize = 5;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+const MAX_PASSPHRASE_LENGTH: usize = 1000;
+const MAX_BODY_SIZE: usize = 64 * 1024; // 64 KB
 
 // ── Request / Response Types ────────────────────────────────
 
@@ -379,6 +382,17 @@ async fn prove(
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: "passphrase is required".into(),
+                ticket_burned: None,
+            }),
+        )
+            .into_response();
+    }
+
+    if req.passphrase.len() > MAX_PASSPHRASE_LENGTH {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("Passphrase too long (max {} characters)", MAX_PASSPHRASE_LENGTH),
                 ticket_burned: None,
             }),
         )
@@ -1529,6 +1543,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/prove/status/{proof_request_id}", get(proof_status))
         .route("/api/mark-solved", post(mark_solved))
         .route("/health", get(health))
+        .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
         .layer(cors)
         .with_state(state);
 
