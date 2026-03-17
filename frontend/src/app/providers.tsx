@@ -6,6 +6,7 @@ import { WagmiProvider } from "@web3auth/modal/react/wagmi";
 import { web3AuthContextConfig } from "@/lib/web3authConfig";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { DemoProvider } from "@/lib/demo-context";
+import { PuzzleFlowProvider } from "@/lib/puzzle-flow-context";
 import { Suspense, useState, useEffect, type ReactNode } from "react";
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -43,7 +44,9 @@ export function Providers({ children }: { children: ReactNode }) {
         <WagmiProvider>
           <ErrorBoundary>
             <Suspense>
-              <DemoProvider>{children}</DemoProvider>
+              <DemoProvider>
+                <PuzzleFlowProvider>{children}</PuzzleFlowProvider>
+              </DemoProvider>
             </Suspense>
           </ErrorBoundary>
         </WagmiProvider>
