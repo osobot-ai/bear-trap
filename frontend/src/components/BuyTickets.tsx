@@ -15,15 +15,15 @@ import {
   BEAR_TRAP_ADDRESS,
   OSO_TOKEN_ADDRESS,
   BASE_CHAIN_ID,
-  TICKET_PRICE_DISPLAY,
-  TICKET_PRICE_RAW,
 } from "@/lib/contracts";
+import { useTicketPrice } from "@/lib/useTicketPrice";
 import { TrapperError } from "./TrapperError";
 import { useDemo } from "@/lib/demo-context";
 
 export function BuyTickets() {
   const { address, isConnected, chain } = useAccount();
   const { isDemo, demoConfig } = useDemo();
+  const { priceRaw, priceDisplay } = useTicketPrice();
   const [ticketAmount, setTicketAmount] = useState("1");
   const [step, setStep] = useState<"approve" | "buy">("approve");
   const [batchStatus, setBatchStatus] = useState<"idle" | "pending" | "confirming" | "success" | "error">("idle");
@@ -93,7 +93,7 @@ export function BuyTickets() {
     useWaitForTransactionReceipt({ hash: buyHash });
 
   const parsedAmount = parseInt(ticketAmount) || 0;
-  const totalCost = TICKET_PRICE_RAW * BigInt(parsedAmount);
+  const totalCost = priceRaw * BigInt(parsedAmount);
   const hasEnoughBalance = osoBalance ? osoBalance >= totalCost : false;
   const hasEnoughAllowance = currentAllowance ? currentAllowance >= totalCost : false;
 
@@ -240,7 +240,7 @@ export function BuyTickets() {
           <div>
             <h3 className="font-display text-lg text-white">Buy Tickets</h3>
             <p className="text-xs text-trap-muted">
-              {TICKET_PRICE_DISPLAY} $OSO per ticket
+              {priceDisplay} $OSO per ticket
             </p>
           </div>
         </div>
@@ -291,7 +291,7 @@ export function BuyTickets() {
             <p className="mt-2 text-xs font-mono text-trap-muted">
               Total cost:{" "}
               <span className="text-trap-amber">
-                {(parsedAmount * Number(TICKET_PRICE_RAW / BigInt(10 ** 18))).toLocaleString()} $OSO
+                {(parsedAmount * Number(priceRaw / BigInt(10 ** 18))).toLocaleString()} $OSO
               </span>
             </p>
           )}

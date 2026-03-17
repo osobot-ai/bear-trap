@@ -54,7 +54,7 @@ declare module "wagmi" {
     functionName: string;
     args?: readonly any[];
     chainId?: number;
-    query?: { enabled?: boolean };
+    query?: { enabled?: boolean; staleTime?: number };
   }): {
     data: any;
     isLoading: boolean;
