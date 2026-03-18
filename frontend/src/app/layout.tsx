@@ -15,10 +15,12 @@ export const metadata: Metadata = {
     ],
     apple: "/apple-touch-icon.png",
   },
+  metadataBase: new URL("https://beartrap.osoknows.com"),
   openGraph: {
     title: "Bear Trap -- The Trap Is Set",
     description:
       "Solve cryptographic puzzles with ZK proofs. Burn $OSO tokens to guess. Win the prize pool.",
+    url: "https://beartrap.osoknows.com",
     images: [
       {
         url: "/og-image.jpg",
