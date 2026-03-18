@@ -32,6 +32,7 @@ export function BuyTickets() {
   const [batchId, setBatchId] = useState<string | undefined>(undefined);
   const [txError, setTxError] = useState<string | null>(null);
   const [demoBuySuccess, setDemoBuySuccess] = useState(false);
+  const [buySuccessful, setBuySuccessful] = useState(false);
 
   // Invalidate all contract read queries so both BuyTickets AND SubmitGuess get fresh data
   const invalidateContractQueries = useCallback(() => {
@@ -131,15 +132,19 @@ export function BuyTickets() {
   useEffect(() => {
     if (isApproveConfirmed) {
       invalidateContractQueries();
+      refetchAllowance();
+      setStep("buy"); // We know approve succeeded for totalCost, skip waiting for refetch
     }
-  }, [isApproveConfirmed, invalidateContractQueries]);
+  }, [isApproveConfirmed, invalidateContractQueries, refetchAllowance]);
 
   // Refetch after successful buy (non-batch flow)
   useEffect(() => {
     if (isBuyConfirmed) {
+      setBuySuccessful(true);
       invalidateContractQueries();
+      refetchTickets();
     }
-  }, [isBuyConfirmed, invalidateContractQueries]);
+  }, [isBuyConfirmed, invalidateContractQueries, refetchTickets]);
 
   // Refetch after batch tx confirms on-chain
   useEffect(() => {
@@ -147,12 +152,14 @@ export function BuyTickets() {
       setBatchStatus("success");
       setBatchId(undefined);
       invalidateContractQueries();
+      refetchTickets();
     }
-  }, [callsStatus?.status, invalidateContractQueries]);
+  }, [callsStatus?.status, invalidateContractQueries, refetchTickets]);
 
   function handleApprove() {
     if (!parsedAmount || parsedAmount <= 0) return;
     setTxError(null);
+    setBuySuccessful(false);
     approve({
       address: OSO_TOKEN_ADDRESS,
       abi: erc20Abi,
@@ -165,6 +172,7 @@ export function BuyTickets() {
   function handleBuy() {
     if (!parsedAmount || parsedAmount <= 0) return;
     setTxError(null);
+    setBuySuccessful(false);
     buy({
       address: BEAR_TRAP_ADDRESS,
       abi: bearTrapAbi,
@@ -177,6 +185,7 @@ export function BuyTickets() {
   function handleBatchBuy() {
     if (!parsedAmount || parsedAmount <= 0) return;
     setTxError(null);
+    setBuySuccessful(false);
     setBatchStatus("pending");
 
     const approveData = encodeFunctionData({
@@ -465,7 +474,7 @@ export function BuyTickets() {
               </button>
             )}
 
-            {isBuyConfirmed && (
+            {buySuccessful && (
               <p className="text-xs font-mono text-trap-green text-center">
                 Tickets purchased successfully.
               </p>

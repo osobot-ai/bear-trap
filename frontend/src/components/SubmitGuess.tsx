@@ -12,6 +12,7 @@ import {
   useSendTransaction,
   useWaitForTransactionReceipt,
 } from "wagmi";
+import { useQueryClient } from "@tanstack/react-query";
 import { encodeAbiParameters, parseEther, pad, type Hex } from "viem";
 import {
   createExecution,
@@ -152,6 +153,7 @@ export function SubmitGuess() {
   const { playSfx, playVoice, playMusic, stopMusic } = useSoundEngine();
   const { isDemo, demoState, demoConfig, setDemoState } = useDemo();
   const { setSolveStep } = usePuzzleFlow();
+  const queryClient = useQueryClient();
   const [puzzleId, setPuzzleId] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<SubmitStep>("idle");
@@ -258,6 +260,12 @@ export function SubmitGuess() {
     query: { enabled: !!address },
   });
 
+  // Helper function to refresh ticket counts everywhere
+  const refreshAfterTicketChange = useCallback(() => {
+    refetchTicketBalance();
+    queryClient.invalidateQueries({ queryKey: ["readContract"] });
+  }, [refetchTicketBalance, queryClient]);
+
   const {
     data: redeemHash,
     sendTransaction: sendRedeemTx,
@@ -353,7 +361,7 @@ export function SubmitGuess() {
           setProofData(proof);
           saveProof(puzzleId, proof);
           setStep("proof-ready");
-          refetchTicketBalance();
+          refreshAfterTicketChange();
         } else if (statusData.status === "failed") {
           if (pollingRef.current) {
             clearInterval(pollingRef.current);
@@ -367,7 +375,7 @@ export function SubmitGuess() {
             setErrorMessage(`${errMsg} (Your ticket was consumed.)`);
             setStep("error");
           }
-          refetchTicketBalance();
+          refreshAfterTicketChange();
         } else if (statusData.status === "expired") {
           if (pollingRef.current) {
             clearInterval(pollingRef.current);
@@ -375,7 +383,7 @@ export function SubmitGuess() {
           }
           setErrorMessage("Proof request expired. Your ticket was consumed.");
           setStep("error");
-          refetchTicketBalance();
+          refreshAfterTicketChange();
         }
       } catch {
         // Network error during polling — keep trying
@@ -434,7 +442,7 @@ export function SubmitGuess() {
         if (error.includes("Wrong guess")) {
           setErrorMessage(error);
           setStep("wrong");
-          refetchTicketBalance();
+          refreshAfterTicketChange();
           return;
         }
 
@@ -475,7 +483,7 @@ export function SubmitGuess() {
         if (data.ticketBurned) {
           setErrorMessage(`${error} (Your ticket was consumed.)`);
           setStep("error");
-          refetchTicketBalance();
+          refreshAfterTicketChange();
           return;
         }
 
@@ -483,7 +491,7 @@ export function SubmitGuess() {
       }
 
       const submitted = data as ProveSubmittedResult;
-      refetchTicketBalance();
+      refreshAfterTicketChange();
       startPolling(submitted.proofRequestId);
     } catch (err) {
       setErrorMessage(
