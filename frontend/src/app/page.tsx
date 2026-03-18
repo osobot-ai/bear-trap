@@ -63,6 +63,14 @@ export default function Home() {
                 Smart Accounts Kit
               </a>
               <a
+                href="https://dune.com/osobot_team_c277935b/bear-trap"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-trap-muted hover:text-trap-green transition-colors font-mono"
+              >
+                Analytics
+              </a>
+              <a
                 href="https://docs.boundless.network"
                 target="_blank"
                 rel="noopener noreferrer"
