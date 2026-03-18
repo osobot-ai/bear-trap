@@ -1,4 +1,8 @@
 
+"use client";
+
+import { useEthPrice, formatUsd } from "@/hooks/useEthPrice";
+
 interface PuzzleCardProps {
   puzzleId: number;
   clueURI: string;
@@ -21,6 +25,8 @@ export function PuzzleCard({
   solved,
   winner,
 }: PuzzleCardProps) {
+  const { ethPrice } = useEthPrice();
+  const usdValue = formatUsd(prizeEth, ethPrice);
   return (
     <div
       className={`
@@ -81,9 +87,16 @@ export function PuzzleCard({
         {prizeEth && (
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono text-trap-muted">Prize</span>
-            <span className="text-sm font-mono font-medium text-trap-green">
-              {prizeEth} ETH
-            </span>
+            <div className="text-right">
+              <span className="text-sm font-mono font-medium text-trap-green">
+                {prizeEth} ETH
+              </span>
+              {usdValue && (
+                <span className="block text-xs font-mono text-trap-muted">
+                  {usdValue}
+                </span>
+              )}
+            </div>
           </div>
         )}
 
