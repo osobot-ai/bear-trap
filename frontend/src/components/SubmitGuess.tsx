@@ -274,7 +274,8 @@ export function SubmitGuess() {
   } = useSendTransaction();
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
-    useWaitForTransactionReceipt({ hash: redeemHash });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useWaitForTransactionReceipt({ hash: redeemHash, chainId: BASE_CHAIN_ID } as any);
 
   // Sync transaction confirmation to local step + shared context
   useEffect(() => {

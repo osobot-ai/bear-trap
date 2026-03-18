@@ -95,7 +95,8 @@ export function BuyTickets() {
   } = useWriteContract();
 
   const { isLoading: isApproveConfirming, isSuccess: isApproveConfirmed } =
-    useWaitForTransactionReceipt({ hash: approveHash });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useWaitForTransactionReceipt({ hash: approveHash, chainId: BASE_CHAIN_ID } as any);
 
   const {
     data: buyHash,
@@ -105,7 +106,8 @@ export function BuyTickets() {
   } = useWriteContract();
 
   const { isLoading: isBuyConfirming, isSuccess: isBuyConfirmed } =
-    useWaitForTransactionReceipt({ hash: buyHash });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useWaitForTransactionReceipt({ hash: buyHash, chainId: BASE_CHAIN_ID } as any);
 
   const parsedAmount = parseInt(ticketAmount) || 0;
   const totalCost = priceRaw * BigInt(parsedAmount);
