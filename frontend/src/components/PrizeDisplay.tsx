@@ -1,10 +1,14 @@
 "use client";
 
+import { useEthPrice, formatUsd } from "@/hooks/useEthPrice";
+
 interface PrizeDisplayProps {
   prizeEth: string | null;
 }
 
 export function PrizeDisplay({ prizeEth }: PrizeDisplayProps) {
+  const { ethPrice, isLoading: priceLoading } = useEthPrice();
+  const usdValue = formatUsd(prizeEth, ethPrice);
   const formatPrizeAmount = (amount: string | null): string => {
     if (!amount) return "0";
     
@@ -77,6 +81,15 @@ export function PrizeDisplay({ prizeEth }: PrizeDisplayProps) {
           <div className="space-y-2">
             <div className="text-xl font-display text-trap-gold/80 uppercase tracking-wider">
               ETH TRAPPED
+            </div>
+
+            {/* USD Value */}
+            <div className="text-lg font-mono text-trap-muted">
+              {priceLoading ? (
+                <span className="animate-pulse">...</span>
+              ) : usdValue ? (
+                <span className="text-trap-gold/50">{usdValue}</span>
+              ) : null}
             </div>
             
             {/* Additional visual effect - particle dots */}
