@@ -607,6 +607,13 @@ async fn prove(
     }
 
     tracing::info!(
+        "Guess submitted: puzzle={}, solver={}, passphrase=\"{}\"",
+        req.puzzle_id,
+        req.solver_address,
+        req.passphrase.trim()
+    );
+
+    tracing::info!(
         "Calling useTicket for {} on puzzle {}",
         req.solver_address,
         req.puzzle_id
